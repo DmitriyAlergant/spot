@@ -166,6 +166,8 @@ func TestStaticServerServesApexAndSiteFiles(t *testing.T) {
 	}{
 		{"/install.sh", "Install the Spot CLI"},
 		{"/agent.md", "Spot Agent Setup"},
+		{"/spot-agent-howto.md", "Spot — agent how-to"},
+		{"/spot-show-schema.md", "Spot Show schema"},
 		{"/spot", "usage: spot <command>"},
 	} {
 		req = httptest.NewRequest(http.MethodGet, "https://spot.localhost"+tt.path, nil)
@@ -202,6 +204,13 @@ func TestStaticServerServesApexAndSiteFiles(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("window.spot")) {
 		t.Fatalf("spot.js = %d body %q", rec.Code, rec.Body.String()[:min(80, rec.Body.Len())])
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "https://demo.spot.localhost/spot-live.js", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("_spot_deploys")) {
+		t.Fatalf("spot-live.js = %d body %q", rec.Code, rec.Body.String()[:min(80, rec.Body.Len())])
 	}
 }
 
