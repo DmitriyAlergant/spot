@@ -378,7 +378,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 30px 26px;
     }
 
@@ -471,11 +471,11 @@
 
     /* A fixed content height — paired with the fixed-ratio preview above —
        keeps every tile the same total size so the gallery rows line up.
-       Title, owner, metadata and description are each clamped, and the tag
-       row is pinned to the bottom so variable content can't change height. */
+       Title, owner, metadata, description and tags each get a stable slot so
+       variable content can't squeeze neighboring rows or change tile height. */
     .tinfo {
       padding: 15px 17px 17px;
-      height: 224px;
+      height: 228px;
       display: flex;
       flex-direction: column;
     }
@@ -494,6 +494,7 @@
       overflow-wrap: anywhere;
       min-width: 0;
       padding-block: 1px;
+      min-height: calc(2lh + 2px);
     }
     .yours {
       flex: 0 0 auto;
@@ -535,6 +536,8 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
       padding-block: 1px;
+      min-height: calc(2lh + 2px);
+      flex: 0 0 auto;
     }
     .tags {
       display: flex;
@@ -547,6 +550,8 @@
     .tinfo .tags {
       margin-top: auto;
       padding-top: 11px;
+      flex-wrap: nowrap;
+      overflow: hidden;
     }
     .tag {
       flex: 0 0 auto;
