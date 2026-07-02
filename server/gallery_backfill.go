@@ -327,19 +327,35 @@ func captureBackfillScreenshot(ctx context.Context, opts galleryBackfillOptions,
 	tmpName := tmp.Name()
 	tmp.Close()
 	defer os.Remove(tmpName)
+	profileDir, err := os.MkdirTemp("", "spot-chrome-profile-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(profileDir)
 	args := []string{
 		"--headless=new",
 		"--disable-gpu",
 		"--disable-dev-shm-usage",
+		"--disable-crash-reporter",
+		"--disable-crashpad",
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--no-sandbox",
 		"--hide-scrollbars",
+		"--ignore-certificate-errors",
 		"--window-size=1280,800",
+		"--user-data-dir=" + profileDir,
 		"--screenshot=" + tmpName,
 		url,
 	}
-	out, err := exec.CommandContext(ctx, chrome, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, chrome, args...)
+	if os.Getenv("HOME") == "" {
+		cmd.Env = append(os.Environ(),
+			"HOME="+os.TempDir(),
+			"XDG_CONFIG_HOME="+filepath.Join(os.TempDir(), ".config"),
+		)
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s failed: %w: %s", filepath.Base(chrome), err, strings.TrimSpace(string(out)))
 	}

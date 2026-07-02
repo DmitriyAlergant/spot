@@ -81,6 +81,9 @@ tar -xpf "$tmp"
 eval "$SPOT_DEPLOY_COMPOSE down --remove-orphans"
 eval "$SPOT_DEPLOY_COMPOSE up -d --build --remove-orphans"
 eval "$SPOT_DEPLOY_COMPOSE ps"
+if ! eval "$SPOT_DEPLOY_COMPOSE exec -T spot-api spot-api backfill-gallery -write -screenshots"; then
+    echo "warning: gallery screenshot backfill failed" >&2
+fi
 '
 
 git archive --format=tar HEAD | ssh "$host" \

@@ -87,9 +87,29 @@ try:
         nested_meta = json.loads((nested_out / "_spot.json").read_text())
         assert nested_meta["title"] == "Spot Show", nested_meta
         assert nested_meta["description"] == "Top-level description", nested_meta
-        run(["./cli/spot", "show", "deploy", "demo", str(show)], extra_env={"TMPDIR": tmp})
+        run(["./cli/spot", "show", "deploy", "--no-screenshot", "demo", str(show)], extra_env={"TMPDIR": tmp})
         leaked = list(pathlib.Path(tmp).glob("spot-show.*"))
         assert not leaked, leaked
+        fake_bin = pathlib.Path(tmp) / "fake-bin"
+        fake_bin.mkdir()
+        chromium = fake_bin / "chromium"
+        chromium.write_text("""#!/bin/sh
+out=
+for arg in "$@"; do
+  case "$arg" in
+    --screenshot=*) out=${arg#--screenshot=} ;;
+  esac
+done
+[ -n "$out" ] || exit 2
+printf 'fake png' > "$out"
+""")
+        chromium.chmod(0o755)
+        start_deploys = Handler.deploys
+        run(
+            ["./cli/spot", "show", "deploy", "shotdemo", str(show)],
+            extra_env={"TMPDIR": tmp, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]},
+        )
+        assert Handler.deploys == start_deploys + 2, Handler.deploys
         zero = subprocess.run(
             ["./cli/spot", "show", "watch", "--interval", "0", "demo", str(show)],
             cwd=root,
@@ -118,7 +138,7 @@ try:
         opener.chmod(0o755)
         start_deploys = Handler.deploys
         watch = subprocess.Popen(
-            ["./cli/spot", "show", "watch", "--open", "--interval", "1", "watch", str(watch_show)],
+            ["./cli/spot", "show", "watch", "--open", "--no-screenshot", "--interval", "1", "watch", str(watch_show)],
             cwd=root,
             env={
                 **env,

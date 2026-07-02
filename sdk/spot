@@ -69,14 +69,15 @@ usage() {
 usage: spot <command>
 
 commands:
-  deploy [name] [path]  sync a directory or index.html (default .) to
+  deploy [--screenshot] [name] [path]
+                        sync a directory or index.html (default .) to
                         the site <name> (default: current directory name)
   show init [json]      write a starter Spot Show JSON file
   show build [json] [out]
                         render a card/block show.json into a static site
-  show deploy [--open] <name> [json]
+  show deploy [--open] [--no-screenshot] <name> [json]
                         render show.json and deploy it to <name>
-  show watch [--open] <name> [json]
+  show watch [--open] [--no-screenshot] <name> [json]
                         redeploy whenever show.json changes
   agent-howto           print current Spot instructions for agents
   show-schema           print the Spot Show JSON schema guide
@@ -94,10 +95,125 @@ EOF
     exit 1
 }
 
+find_chrome() {
+    if [ -n "${SPOT_CHROME:-}" ]; then
+        if command -v "$SPOT_CHROME" >/dev/null 2>&1 || [ -x "$SPOT_CHROME" ]; then
+            printf '%s\n' "$SPOT_CHROME"
+            return 0
+        fi
+        echo "error: SPOT_CHROME does not point to an executable: $SPOT_CHROME" >&2
+        return 1
+    fi
+    for chrome in chromium chromium-browser google-chrome google-chrome-stable; do
+        if command -v "$chrome" >/dev/null 2>&1; then
+            command -v "$chrome"
+            return 0
+        fi
+    done
+    echo "error: Chromium or Google Chrome is required for screenshots" >&2
+    echo "       install chromium, set SPOT_CHROME, or pass --no-screenshot" >&2
+    return 1
+}
+
+capture_screenshot() {
+    url=$1
+    out=$2
+    chrome=$(find_chrome) || exit 1
+    profile=$(mktemp -d "${TMPDIR:-/tmp}/spot-chrome.XXXXXX")
+    echo "capturing screenshot: $url"
+    if ! HOME=${HOME:-/tmp} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/tmp/.config} "$chrome" \
+        --headless=new \
+        --disable-gpu \
+        --disable-dev-shm-usage \
+        --disable-crash-reporter \
+        --disable-crashpad \
+        --no-first-run \
+        --no-default-browser-check \
+        --no-sandbox \
+        --hide-scrollbars \
+        --ignore-certificate-errors \
+        --run-all-compositor-stages-before-draw \
+        --user-data-dir="$profile" \
+        --window-size=1280,800 \
+        --screenshot="$out" \
+        "$url" >/dev/null 2>&1; then
+        rm -rf "$profile"
+        echo "error: screenshot capture failed with $(basename "$chrome")" >&2
+        exit 1
+    fi
+    rm -rf "$profile"
+    [ -s "$out" ] || { echo "error: screenshot capture wrote an empty file" >&2; exit 1; }
+}
+
+deploy_upload() {
+    name=$1
+    src=$2
+    preserve_access=$3
+    screenshot=${4:-}
+
+    if [ -f "$src" ]; then
+        file=$(basename "$src")
+        dir=$(dirname "$src")
+    else
+        dir=$src
+    fi
+
+    # One -F part per file, the filename carrying the site-relative path
+    # — the shape /api/deploy expects. The server syncs: files absent
+    # from the upload are removed from the live site. Dot directories
+    # (.git and friends) stay home; the server drops them anyway.
+    #
+    # Quote the path and filename= values so curl does not treat ';' ','
+    # or '@' in a filename as -F metacharacters.
+    set -- -F "site=$name"
+    if [ "$preserve_access" = 1 ]; then
+        set -- "$@" -F "preserve_access=true"
+    fi
+    if [ -f "$src" ]; then
+        set -- "$@" -F "files=@\"$file\";filename=\"index.html\""
+    else
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            f=${f#./}
+            set -- "$@" -F "files=@\"$f\";filename=\"$f\""
+        done <<EOF
+$(cd "$dir" && find . -name '.?*' -prune -o -type f -print)
+EOF
+    fi
+    if [ -n "$screenshot" ]; then
+        set -- "$@" -F "files=@\"$screenshot\";filename=\"_screenshot.png\""
+    fi
+
+    # Capture curl's exit without tripping set -e, so a network/HTTP
+    # failure reaches the friendly message below instead of aborting.
+    if ! out=$(cd "$dir" && curl -sS $SPOT_CURL_OPTS -w '\n%{http_code}' \
+        "$@" "$SPOT_URL/api/deploy"); then
+        echo "error: could not reach $SPOT_URL/api/deploy" >&2
+        exit 1
+    fi
+    status=$(printf '%s' "$out" | tail -n 1)
+    body=$(printf '%s' "$out" | sed '$d')
+    if [ "$status" != "200" ]; then
+        echo "error: deploy failed (HTTP $status): $body" >&2
+        exit 1
+    fi
+}
+
 deploy() {
+    deploy_screenshot=0
+    preserve_access=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --screenshot) deploy_screenshot=1; shift ;;
+            --no-screenshot) deploy_screenshot=0; shift ;;
+            --preserve-access) preserve_access=1; shift ;;
+            --help|-h) usage ;;
+            -*) echo "error: unknown deploy option '$1'" >&2; exit 1 ;;
+            *) break ;;
+        esac
+    done
     name=${1:-$(basename "$PWD")}
     src=${2:-.}
-    preserve_access=${3:-}
     if [ "$#" -eq 1 ] && [ -f "$1" ] && [ "$(basename "$1")" = "index.html" ]; then
         name=$(basename "$PWD")
         src=$1
@@ -124,41 +240,12 @@ deploy() {
     fi
     echo "deploying $src -> $name.$SPOT_DOMAIN"
 
-    # One -F part per file, the filename carrying the site-relative path
-    # — the shape /api/deploy expects. The server syncs: files absent
-    # from the upload are removed from the live site. Dot directories
-    # (.git and friends) stay home; the server drops them anyway.
-    #
-    # Quote the path and filename= values so curl does not treat ';' ','
-    # or '@' in a filename as -F metacharacters.
-    set -- -F "site=$name"
-    if [ "$preserve_access" = "--preserve-access" ]; then
-        set -- "$@" -F "preserve_access=true"
-    fi
-    if [ -f "$src" ]; then
-        set -- "$@" -F "files=@\"$file\";filename=\"index.html\""
-    else
-        while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            f=${f#./}
-            set -- "$@" -F "files=@\"$f\";filename=\"$f\""
-        done <<EOF
-$(cd "$dir" && find . -name '.?*' -prune -o -type f -print)
-EOF
-    fi
-
-    # Capture curl's exit without tripping set -e, so a network/HTTP
-    # failure reaches the friendly message below instead of aborting.
-    if ! out=$(cd "$dir" && curl -sS $SPOT_CURL_OPTS -w '\n%{http_code}' \
-        "$@" "$SPOT_URL/api/deploy"); then
-        echo "error: could not reach $SPOT_URL/api/deploy" >&2
-        exit 1
-    fi
-    status=$(printf '%s' "$out" | tail -n 1)
-    body=$(printf '%s' "$out" | sed '$d')
-    if [ "$status" != "200" ]; then
-        echo "error: deploy failed (HTTP $status): $body" >&2
-        exit 1
+    deploy_upload "$name" "$src" "$preserve_access"
+    if [ "$deploy_screenshot" = 1 ]; then
+        shot=$(mktemp "${TMPDIR:-/tmp}/spot-screenshot.XXXXXX.png")
+        capture_screenshot "$SPOT_SCHEME://$name.$SPOT_HOSTPORT/" "$shot"
+        deploy_upload "$name" "$src" "$preserve_access" "$shot"
+        rm -f "$shot"
     fi
     echo "live: $SPOT_SCHEME://$name.$SPOT_HOSTPORT/"
 }
@@ -168,8 +255,8 @@ show_usage() {
 usage:
   spot show init [show.json] [--force]
   spot show build [show.json] [out-dir]
-  spot show deploy [--open] <site-name> [show.json]
-  spot show watch [--open] [--interval seconds] <site-name> [show.json]
+  spot show deploy [--open] [--no-screenshot] <site-name> [show.json]
+  spot show watch [--open] [--no-screenshot] [--interval seconds] <site-name> [show.json]
 
 show.json shape:
 {
@@ -622,9 +709,12 @@ open_url() {
 
 show_deploy() {
     show_open=0
+    show_screenshot=1
     while [ $# -gt 0 ]; do
         case $1 in
             --open) show_open=1; shift ;;
+            --screenshot) show_screenshot=1; shift ;;
+            --no-screenshot) show_screenshot=0; shift ;;
             --help|-h) show_usage ;;
             -*) echo "error: unknown show deploy option '$1'" >&2; exit 1 ;;
             *) break ;;
@@ -642,7 +732,11 @@ show_deploy() {
     trap 'cleanup_show_deploy; trap - INT TERM EXIT; exit 143' TERM
     trap 'rc=$?; cleanup_show_deploy; exit $rc' EXIT
     show_build "$spec" "$show_tmp"
-    deploy "$site" "$show_tmp" --preserve-access
+    if [ "$show_screenshot" = 1 ]; then
+        deploy --preserve-access --screenshot "$site" "$show_tmp"
+    else
+        deploy --preserve-access --no-screenshot "$site" "$show_tmp"
+    fi
     cleanup_show_deploy
     show_tmp=
     trap - INT TERM EXIT
@@ -657,10 +751,13 @@ file_state() {
 
 show_watch() {
     show_open=0
+    show_screenshot=1
     interval=2
     while [ $# -gt 0 ]; do
         case $1 in
             --open) show_open=1; shift ;;
+            --screenshot) show_screenshot=1; shift ;;
+            --no-screenshot) show_screenshot=0; shift ;;
             --interval)
                 [ $# -gt 1 ] || { echo "error: --interval needs seconds" >&2; exit 1; }
                 interval=$2; shift 2 ;;
@@ -683,14 +780,16 @@ show_watch() {
     [ "$interval" -gt 0 ] || { echo "error: --interval must be greater than zero" >&2; exit 1; }
     open_pending=$show_open
     watch_deploy() {
+        screenshot_arg=--screenshot
+        [ "$show_screenshot" = 1 ] || screenshot_arg=--no-screenshot
         if [ "$open_pending" = 1 ]; then
-            if ( show_deploy --open "$site" "$spec" ); then
+            if ( show_deploy --open "$screenshot_arg" "$site" "$spec" ); then
                 open_pending=0
                 return 0
             fi
             return 1
         fi
-        ( show_deploy "$site" "$spec" )
+        ( show_deploy "$screenshot_arg" "$site" "$spec" )
     }
     watch_deploy_or_log() {
         if ! watch_deploy; then

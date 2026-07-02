@@ -93,6 +93,11 @@ Deploy it to a stable site name:
 cli/spot show deploy spot-show show.json
 ```
 
+Spot Show deploys capture and upload `_screenshot.png` by default so the
+gallery uses a real thumbnail. For custom static sites, use
+`cli/spot deploy --screenshot <name> <folder>` when the site should appear in
+the public gallery with a preview.
+
 For local demos, open the browser after deploy:
 
 ```sh
@@ -377,6 +382,10 @@ Deploy the committed tree with the TLS overlay and orphan cleanup:
 ```sh
 scripts/deploy-prod.sh
 ```
+
+Production deploys run a gallery backfill after the containers restart. The
+backfill writes missing `_spot.json` metadata and captures missing
+`_screenshot.png` previews for public sites.
 
 To populate gallery metadata for sites deployed before `_spot.json` and
 screenshots existed, run the maintenance backfill from the production

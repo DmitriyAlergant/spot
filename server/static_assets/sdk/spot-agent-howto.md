@@ -55,6 +55,15 @@ HTML/CSS/JS works. Deployed sites can load the browser SDK with:
 <script src="/spot.js"></script>
 ```
 
+Public gallery sites should ship a root `_screenshot.png`, `_screenshot.jpg`,
+`_screenshot.jpeg`, or `_screenshot.webp` so the gallery shows a real thumbnail
+instead of the generated fallback. For custom sites, pass `--screenshot` when a
+browser is available:
+
+```sh
+spot deploy --screenshot <site-name> <folder>
+```
+
 ### 2. Spot Show card/block report
 
 Use this for agent visual reports and work-in-progress review. Start from the
@@ -66,6 +75,11 @@ spot show deploy <site-name> show.json
 # for local human demos:
 spot show deploy --open <site-name> show.json
 ```
+
+`spot show deploy` captures and uploads `_screenshot.png` by default so the
+gallery thumbnail reflects the rendered report. If Chromium is unavailable in a
+constrained environment, install it, set `SPOT_CHROME`, or pass
+`--no-screenshot` only when a thumbnail is impossible.
 
 Reuse the same `<site-name>` while iterating. The generated page includes
 `/spot-live.js`, so open browser tabs refresh after each redeploy. For hands-on
@@ -127,6 +141,10 @@ Rules of thumb:
    ```sh
    spot show deploy <site-name> show.json
    ```
+
+   This should leave the deployed source with `_screenshot.png`; check the
+   deploy output and do not skip the screenshot unless the user explicitly asks
+   or the environment cannot run Chromium.
 
 5. Tell the user the URL once:
 

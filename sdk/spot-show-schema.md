@@ -9,7 +9,10 @@ spot show deploy <site-name> show.json
 
 Reuse the same site name while iterating. Open browser tabs refresh after each
 redeploy through `/spot-live.js`. The generated `_spot.json` uses the show's
-`title` and `description` for gallery metadata.
+`title` and `description` for gallery metadata. `spot show deploy` captures and
+uploads a root `_screenshot.png` by default so the public gallery shows a real
+preview; use `--no-screenshot` only when Chromium is unavailable or the user
+explicitly wants to skip gallery previews.
 
 ## Top-level shape
 
@@ -270,6 +273,8 @@ source may be downloadable by authorized viewers.
    ```sh
    spot show deploy <site-name> show.json
    ```
+
+   The deploy should include `_screenshot.png` for the gallery thumbnail.
 
 4. Tell the user the URL once. On later updates, just redeploy and summarize what
    changed. For active local iteration, use:
