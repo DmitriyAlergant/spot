@@ -449,15 +449,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Sniff the content type from the bytes rather than trusting the
-	// client's declared type — that header controls how a browser renders
-	// the download, so a forged image/png on HTML bytes would be a stored
-	// XSS in the viewer's site origin.
-	sniff := make([]byte, 512)
-	n, _ := io.ReadFull(file, sniff)
-	contentType := http.DetectContentType(sniff[:n])
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		log.Printf("files: seek: %v", err)
+	contentType, err := uploadContentType(header.Filename, header.Header.Get("Content-Type"), file)
+	if err != nil {
+		log.Printf("files: content type: %v", err)
 		httpError(w, http.StatusInternalServerError, "could not read the upload")
 		return
 	}

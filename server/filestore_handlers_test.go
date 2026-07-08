@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"testing"
 	"time"
 )
@@ -101,5 +102,73 @@ func TestFileListAndDeleteHandlers(t *testing.T) {
 	srv.routes().ServeHTTP(rec, badDel)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("delete with bad id = %d, want 400", rec.Code)
+	}
+}
+
+func TestFileUploadServesContentTypes(t *testing.T) {
+	files, err := NewLocalFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		files:      files,
+		policies:   NewPolicyStore(t.TempDir(), time.Second),
+		spotDomain: "spot.localhost",
+	}
+
+	cases := []struct {
+		name        string
+		filename    string
+		declared    string
+		body        []byte
+		contentType string
+	}{
+		{"png", "probe.png", "image/png", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), "image/png"},
+		{"svg", "probe.svg", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>`), "image/svg+xml"},
+		{"pdf", "probe.pdf", "application/pdf", []byte("%PDF-1.7\n"), "application/pdf"},
+		{"text", "probe.txt", "text/plain", []byte("hello"), "text/plain; charset=utf-8"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			var form bytes.Buffer
+			writer := multipart.NewWriter(&form)
+			header := make(textproto.MIMEHeader)
+			header.Set("Content-Disposition", `form-data; name="file"; filename="`+tt.filename+`"`)
+			header.Set("Content-Type", tt.declared)
+			part, err := writer.CreatePart(header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := part.Write(tt.body); err != nil {
+				t.Fatal(err)
+			}
+			writer.Close()
+
+			req := httptest.NewRequest(http.MethodPost, "http://demo.spot.localhost/api/files", &form)
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			rec := httptest.NewRecorder()
+			srv.routes().ServeHTTP(rec, req)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("upload: status %d body %s", rec.Code, rec.Body)
+			}
+			var stored StoredFile
+			if err := json.Unmarshal(rec.Body.Bytes(), &stored); err != nil {
+				t.Fatalf("decode upload: %v", err)
+			}
+			if stored.ContentType != tt.contentType {
+				t.Fatalf("upload content_type = %q, want %q", stored.ContentType, tt.contentType)
+			}
+
+			req = httptest.NewRequest(http.MethodGet, "http://demo.spot.localhost"+stored.URL, nil)
+			rec = httptest.NewRecorder()
+			srv.routes().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("download: status %d body %s", rec.Code, rec.Body)
+			}
+			if got := rec.Header().Get("Content-Type"); got != tt.contentType {
+				t.Fatalf("download Content-Type = %q, want %q", got, tt.contentType)
+			}
+		})
 	}
 }

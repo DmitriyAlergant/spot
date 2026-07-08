@@ -61,9 +61,7 @@ func (f *FileStore) Put(ctx context.Context, site, filename, contentType string,
 	}
 	name := sanitizeFilename(filename)
 	key := site + "/" + id + "/" + name
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	contentType = contentTypeForStorage(name, contentType)
 	_, err = f.client.PutObject(ctx, f.bucket, key, r, size,
 		minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
@@ -101,7 +99,7 @@ func (f *FileStore) Get(ctx context.Context, site, id, name string) (io.ReadClos
 		}
 		return nil, "", fmt.Errorf("stat file %s: %w", key, err)
 	}
-	return obj, stat.ContentType, nil
+	return obj, contentTypeForRead(name, stat.ContentType), nil
 }
 
 // List returns the uploads stored for a site, newest-name first is not

@@ -100,9 +100,9 @@ func TestFileUploadRoundtrip(t *testing.T) {
 	}
 }
 
-// TestFileUploadHTMLIsNotRenderable verifies the XSS defense: an HTML
-// upload is sniffed (not trusted) and served as a sandboxed attachment
-// so a browser never executes it in the viewer's site origin.
+// TestFileUploadHTMLIsNotRenderable verifies the XSS defense: even when
+// the upload declares an image type, the response prevents the browser
+// from re-sniffing the bytes as executable HTML.
 func TestFileUploadHTMLIsNotRenderable(t *testing.T) {
 	endpoint := os.Getenv("SPOT_TEST_S3_ENDPOINT")
 	if endpoint == "" {
@@ -149,9 +149,8 @@ func TestFileUploadHTMLIsNotRenderable(t *testing.T) {
 	}
 	var stored StoredFile
 	json.NewDecoder(res.Body).Decode(&stored)
-	// The client claimed image/png; sniffing must override it to text/html.
-	if stored.ContentType != "text/html; charset=utf-8" {
-		t.Errorf("stored content type = %q, want sniffed text/html", stored.ContentType)
+	if stored.ContentType != "image/png" {
+		t.Errorf("stored content type = %q, want declared image/png", stored.ContentType)
 	}
 
 	got, err := getWithForwardedHost(ts.URL+stored.URL, "it-files.spot.localhost")
@@ -159,8 +158,11 @@ func TestFileUploadHTMLIsNotRenderable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer got.Body.Close()
-	if disp := got.Header.Get("Content-Disposition"); !strings.HasPrefix(disp, "attachment") {
-		t.Errorf("HTML upload Content-Disposition = %q, want attachment", disp)
+	if ct := got.Header.Get("Content-Type"); ct != "image/png" {
+		t.Errorf("HTML upload Content-Type = %q, want image/png", ct)
+	}
+	if disp := got.Header.Get("Content-Disposition"); !strings.HasPrefix(disp, "inline") {
+		t.Errorf("HTML upload Content-Disposition = %q, want inline image", disp)
 	}
 	if got.Header.Get("X-Content-Type-Options") != "nosniff" {
 		t.Error("missing X-Content-Type-Options: nosniff")

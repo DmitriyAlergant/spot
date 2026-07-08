@@ -44,9 +44,7 @@ func (f *LocalFileStore) Put(_ context.Context, site, filename, contentType stri
 	if err != nil {
 		return StoredFile{}, fmt.Errorf("store file %s/%s/%s: %w", site, id, name, err)
 	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	contentType = contentTypeForStorage(name, contentType)
 	return StoredFile{
 		ID:          id,
 		Name:        name,
@@ -67,7 +65,7 @@ func (f *LocalFileStore) Get(_ context.Context, site, id, name string) (io.ReadC
 	if err != nil {
 		return nil, "", fmt.Errorf("open file %s/%s/%s: %w", site, id, name, err)
 	}
-	contentType := sniffContentType(file)
+	contentType := contentTypeForRead(name, sniffContentType(file))
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		file.Close()
 		return nil, "", fmt.Errorf("seek file %s/%s/%s: %w", site, id, name, err)
