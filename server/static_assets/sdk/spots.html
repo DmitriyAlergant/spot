@@ -21,6 +21,8 @@
       --go: #23b14d;
       --bad: #d92d2d;
       --paper: #fff7d6;
+      --saved: #ff9f1c;
+      --saved-soft: #ffe6a3;
       --font-logo: 'Pacifico', 'Brush Script MT', cursive;
       --font-mono: 'Space Mono', ui-monospace, 'SF Mono', monospace;
     }
@@ -292,7 +294,7 @@
     /* ─── gallery ─────────────────────────────────────────────── */
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 18px;
       margin-bottom: 34px;
     }
@@ -376,6 +378,47 @@
       pointer-events: none;
     }
 
+    .saved-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 55px;
+      border: 3px solid var(--ink);
+      border-radius: 16px;
+      background: var(--card);
+      color: var(--ink);
+      box-shadow: 6px 7px 0 var(--ink);
+      padding: 0 18px;
+      font: 700 12px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: transform .12s ease, box-shadow .12s ease, background .12s ease, color .12s ease;
+    }
+    .saved-toggle:hover,
+    .saved-toggle.active {
+      transform: translate(-2px, -2px);
+      box-shadow: 8px 9px 0 var(--ink);
+      background: var(--saved-soft);
+    }
+    .saved-toggle:disabled {
+      opacity: .68;
+      cursor: default;
+      transform: none;
+      box-shadow: 6px 7px 0 var(--ink);
+      background: var(--card);
+    }
+    .saved-toggle.active {
+      color: var(--ink);
+    }
+    .saved-toggle .star {
+      font-size: 17px;
+      line-height: 1;
+      color: var(--saved);
+      -webkit-text-stroke: 1px var(--ink);
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -395,6 +438,15 @@
     }
     .tile:hover { transform: translate(-3px, -4px); box-shadow: 11px 13px 0 var(--ink); }
     .tile:active { transform: translate(2px, 3px); box-shadow: 2px 2px 0 var(--ink); }
+    .tile.saved {
+      box-shadow: 7px 8px 0 var(--ink), inset 0 0 0 5px var(--saved-soft);
+    }
+    .tile.saved:hover {
+      box-shadow: 11px 13px 0 var(--ink), inset 0 0 0 5px var(--saved-soft);
+    }
+    .tile.saved:active {
+      box-shadow: 2px 2px 0 var(--ink), inset 0 0 0 5px var(--saved-soft);
+    }
     .tile-link {
       display: block;
       color: inherit;
@@ -437,7 +489,8 @@
     .preview.ready .glyph { opacity: 0; }
 
     .visit,
-    .download-float {
+    .download-float,
+    .save-float {
       position: absolute;
       z-index: 2;
       top: 11px;
@@ -455,8 +508,39 @@
       transform: translateY(-4px);
       transition: opacity .15s ease, transform .15s ease, background .12s ease, color .12s ease;
     }
-    .visit { right: 11px; }
+    .visit {
+      top: auto;
+      right: 11px;
+      bottom: 11px;
+    }
     .download-float { left: 11px; }
+    .save-float {
+      right: 11px;
+      z-index: 3;
+      display: inline-grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      background: var(--card);
+      color: var(--mutedink);
+      opacity: 1;
+      pointer-events: auto;
+      transform: none;
+      cursor: pointer;
+      font: 700 20px/1 var(--font-mono);
+    }
+    .save-float[aria-pressed="true"] {
+      background: var(--saved-soft);
+      color: var(--saved);
+      -webkit-text-stroke: 1px var(--ink);
+    }
+    .save-float:hover,
+    .save-float:focus-visible {
+      background: var(--ink);
+      color: #fff;
+      -webkit-text-stroke: 0;
+    }
     .download-float:hover,
     .download-float:focus-visible,
     .tile-link:hover .visit,
@@ -601,7 +685,8 @@
       .topbar { padding-top: 22px; }
       .site { grid-template-columns: 1fr; padding: 22px 20px; }
       .toolbar { grid-template-columns: 1fr; }
-      #sort { width: 100%; }
+      #sort,
+      .saved-toggle { width: 100%; }
     }
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; transition: none !important; }
@@ -655,6 +740,10 @@
             <option value="name">A to Z</option>
           </select>
         </div>
+        <button class="saved-toggle" id="saved-toggle" type="button" aria-pressed="false">
+          <span class="star" aria-hidden="true">★</span>
+          <span id="saved-toggle-label">Saved · 0</span>
+        </button>
       </div>
       <div class="tagbar" id="tagbar" hidden aria-label="Popular tags"></div>
       <div class="grid" id="grid"></div>
@@ -708,6 +797,7 @@
         return (bytes / 1024 / 1024).toFixed(1) + ' MB';
       };
       const downloadURL = (site) => site.url.replace(/\/$/, '') + '/api/download';
+      const siteLabel = (site) => site.title || site.name;
       const tagList = (tags, onPick, options = {}) => {
         const wrap = document.createElement('div');
         wrap.className = 'tags';
@@ -988,8 +1078,64 @@
       // ─── gallery ──────────────────────────────────────────────
       let gallery = [];
       let activeTag = '';
+      let savedOnly = false;
       const grid = $('grid');
       const tagbar = $('tagbar');
+      const savedToggle = $('saved-toggle');
+      const savedToggleLabel = $('saved-toggle-label');
+      const SAVED_KEY = 'spot.gallery.saved.v1';
+      let savedSpots = new Map();
+
+      const savedSnapshot = (site) => ({
+        name: site.name,
+        url: site.url,
+        title: site.title || '',
+        owner: site.owner || '',
+        saved_at: new Date().toISOString(),
+      });
+
+      const loadSavedSpots = () => {
+        try {
+          const raw = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]');
+          const items = Array.isArray(raw) ? raw : [];
+          savedSpots = new Map(items
+            .filter((site) => site && site.name && site.url)
+            .map((site) => [site.name, site]));
+        } catch {
+          savedSpots = new Map();
+        }
+      };
+
+      const persistSavedSpots = () => {
+        try {
+          localStorage.setItem(SAVED_KEY, JSON.stringify([...savedSpots.values()]));
+        } catch {
+          toast('Could not save in this browser');
+        }
+      };
+
+      const isSaved = (site) => savedSpots.has(site.name);
+
+      const updateSavedChrome = () => {
+        const count = savedSpots.size;
+        savedToggleLabel.textContent = 'Saved · ' + count;
+        savedToggle.classList.toggle('active', savedOnly);
+        savedToggle.setAttribute('aria-pressed', savedOnly ? 'true' : 'false');
+        savedToggle.disabled = count === 0 && !savedOnly;
+      };
+
+      const toggleSaved = (site) => {
+        if (isSaved(site)) {
+          savedSpots.delete(site.name);
+          toast(siteLabel(site) + ' removed from saved');
+        } else {
+          savedSpots.set(site.name, savedSnapshot(site));
+          toast(siteLabel(site) + ' saved');
+        }
+        persistSavedSpots();
+        if (savedSpots.size === 0) savedOnly = false;
+        renderGallery();
+      };
 
       const chooseTag = (tag) => {
         activeTag = activeTag === tag ? '' : tag;
@@ -1031,7 +1177,6 @@
       // turns it into a changelog, where one busy person's redeploys
       // crowd out everything else. A variety boost (e.g. cap
       // consecutive tiles per owner) would keep the wall communal.
-      const siteLabel = (site) => site.title || site.name;
       const rankGallery = (sites, mode) => {
         const ranked = [...sites];
         if (mode === 'name') ranked.sort((a, b) => siteLabel(a).localeCompare(siteLabel(b)));
@@ -1041,11 +1186,13 @@
       };
 
       const renderGallery = () => {
+        updateSavedChrome();
         renderTagFilters();
         const query = $('search').value.trim().toLowerCase();
         const mode = $('sort').value;
         const shown = rankGallery(gallery, mode).filter((site) => {
           const tags = site.tags || [];
+          if (savedOnly && !isSaved(site)) return false;
           if (activeTag && !tags.includes(activeTag)) return false;
           if (!query) return true;
           const haystack = [site.name, site.title || '', site.description || '', site.owner || '', ...tags]
@@ -1059,11 +1206,22 @@
           $('tally').textContent = '';
           return;
         }
+        if (!shown.length) {
+          const heading = savedOnly ? 'No saved matches' : 'No matches';
+          const detail = savedOnly
+            ? 'Clear the search or save another public spot.'
+            : 'Try another search or tag.';
+          showNote('gallery-note', heading, detail);
+          $('tally').textContent = savedOnly
+            ? '0 of ' + gallery.length + ' public spots saved'
+            : '0 of ' + gallery.length + ' public spots';
+          return;
+        }
         $('gallery-note').hidden = true;
 
         for (const site of shown) {
           const tile = document.createElement('article');
-          tile.className = 'tile';
+          tile.className = 'tile' + (isSaved(site) ? ' saved' : '');
           const link = document.createElement('a');
           link.className = 'tile-link';
           link.href = site.url;
@@ -1150,6 +1308,19 @@
           // the info block (title, meta, description, tags) sits beside it.
           link.append(preview);
           tile.append(link, info);
+          const save = document.createElement('button');
+          save.type = 'button';
+          save.className = 'save-float';
+          save.textContent = isSaved(site) ? '★' : '☆';
+          save.setAttribute('aria-pressed', isSaved(site) ? 'true' : 'false');
+          save.setAttribute('aria-label', (isSaved(site) ? 'Unsave ' : 'Save ') + siteLabel(site));
+          save.title = isSaved(site) ? 'Unsave spot' : 'Save spot';
+          save.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleSaved(site);
+          });
+          tile.appendChild(save);
           if (site.download_allowed !== false) {
             const download = document.createElement('a');
             download.className = 'download-float';
@@ -1164,12 +1335,18 @@
 
         $('tally').textContent = shown.length === gallery.length && !activeTag
           ? gallery.length + ' public spot' + (gallery.length === 1 ? '' : 's') + ' on the mesh'
-          : shown.length + ' of ' + gallery.length + ' public spots' + (activeTag ? ' tagged ' + activeTag : '');
+          : shown.length + ' of ' + gallery.length + ' public spots' +
+            (savedOnly ? ' saved' : '') +
+            (activeTag ? ' tagged ' + activeTag : '');
 
       };
 
       $('search').addEventListener('input', renderGallery);
       $('sort').addEventListener('change', renderGallery);
+      savedToggle.addEventListener('click', () => {
+        savedOnly = !savedOnly;
+        renderGallery();
+      });
 
       const loadGallery = async () => {
         try {
@@ -1188,7 +1365,10 @@
         if (VIEW === 'deploys' && mySites.length) renderDeploys();
       });
       if (VIEW === 'deploys') loadMine();
-      else loadGallery();
+      else {
+        loadSavedSpots();
+        loadGallery();
+      }
     })();
   </script>
 </body>
