@@ -68,6 +68,29 @@ type signalDeployAuth struct {
 	called chan struct{}
 }
 
+type listCountingSiteStore struct {
+	listCalls int
+	openCalls int
+}
+
+func (s *listCountingSiteStore) Put(context.Context, string, string, string, []byte) error {
+	return nil
+}
+
+func (s *listCountingSiteStore) List(context.Context, string) ([]string, error) {
+	s.listCalls++
+	return []string{"index.html", "assets/app.js"}, nil
+}
+
+func (s *listCountingSiteStore) Open(context.Context, string, string) (io.ReadCloser, SiteFileInfo, error) {
+	s.openCalls++
+	return nil, SiteFileInfo{}, ErrNotFound
+}
+
+func (s *listCountingSiteStore) Remove(context.Context, string, string) error {
+	return nil
+}
+
 func (a *signalDeployAuth) AuthorizeDeploy(context.Context, string, Identity) (DeployAuthorization, error) {
 	select {
 	case a.called <- struct{}{}:
@@ -78,6 +101,84 @@ func (a *signalDeployAuth) AuthorizeDeploy(context.Context, string, Identity) (D
 
 func (a *signalDeployAuth) RecordDeploy(context.Context, DeployAuditEvent) error {
 	return nil
+}
+
+func TestMySitesCloudflareSummaryDoesNotSnapshotSiteFiles(t *testing.T) {
+	store := &listCountingSiteStore{}
+	admin := &fakeSiteAdmin{owned: []OwnedSite{{
+		SiteRecord:  SiteRecord{Name: "demo", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		FileCount:   2,
+		TotalBytes:  42,
+		ContentHash: "known-deploy-hash",
+	}}}
+	db := openTestDB(t)
+	srv := &Server{
+		siteAdmin:      admin,
+		sites:          store,
+		resolver:       NewStaticResolver("alice@example.com", "Alice", nil),
+		spotDomain:     "spot.localhost",
+		trustedProxies: testTrustedProxies(t),
+		cloudflarePubs: NewCloudflarePublicationStore(db),
+		cloudflare: &CloudflarePublisher{cfg: cloudflareConfig{
+			Status: cloudflareConfigEnabled, BaseDomain: "pages.example.com",
+		}},
+	}
+	rec := httptest.NewRecorder()
+	srv.handleMySites(rec, sitesRequest(http.MethodGet, "/api/sites/mine"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mine = %d %s", rec.Code, rec.Body.String())
+	}
+	if store.listCalls != 0 {
+		t.Fatalf("site List calls = %d, want zero metadata-path snapshots", store.listCalls)
+	}
+	if !strings.Contains(rec.Body.String(), `"content_hash":"known-deploy-hash"`) {
+		t.Fatalf("mine response = %s, want deploy-time content hash", rec.Body.String())
+	}
+}
+
+func TestMySitesDoesNotTrustLaterPublicationForLegacyConcurrentDeploy(t *testing.T) {
+	admin := &fakeSiteAdmin{owned: []OwnedSite{{
+		SiteRecord: SiteRecord{Name: "demo", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	}}}
+	db := openTestDB(t)
+	if _, err := db.ExecContext(context.Background(),
+		`INSERT INTO sites (name, owner_email) VALUES ('demo', 'alice@example.com')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewCloudflarePublicationStore(db)
+	if err := repo.Upsert(context.Background(), cloudflarePublication{
+		Site: "demo", ProjectName: "spot-demo", Hostname: "demo.pages.example.com",
+		ContentHash: "published-hash", Status: "published",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		siteAdmin:      admin,
+		sites:          &listCountingSiteStore{},
+		resolver:       NewStaticResolver("alice@example.com", "Alice", nil),
+		spotDomain:     "spot.localhost",
+		trustedProxies: testTrustedProxies(t),
+		cloudflarePubs: repo,
+		cloudflare: &CloudflarePublisher{cfg: cloudflareConfig{
+			Status: cloudflareConfigEnabled, BaseDomain: "pages.example.com",
+		}},
+	}
+	rec := httptest.NewRecorder()
+	srv.handleMySites(rec, sitesRequest(http.MethodGet, "/api/sites/mine"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mine = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Sites []struct {
+			Cloudflare cloudflareStatusJSON `json:"cloudflare"`
+		} `json:"sites"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Sites) != 1 || body.Sites[0].Cloudflare.ContentHash != "" {
+		t.Fatalf("mine response = %s, want legacy hash left unknown despite later publication", rec.Body.String())
+	}
 }
 
 func writePolicy(t *testing.T, dir, site, content string) {
@@ -362,11 +463,12 @@ func TestDeleteSiteAuthorizationOutcomes(t *testing.T) {
 		name       string
 		deleteErr  error
 		wantCode   int
+		wantAction string
 		wantStatus string // audited status, "" for no audit event
 	}{
-		{"not found", ErrSiteNotFound, http.StatusNotFound, ""},
-		{"forbidden", ErrDeployForbidden, http.StatusForbidden, "denied"},
-		{"registry failure", io.ErrUnexpectedEOF, http.StatusInternalServerError, "failed"},
+		{"not found", ErrSiteNotFound, http.StatusNotFound, "", ""},
+		{"forbidden", ErrDeployForbidden, http.StatusForbidden, "delete", "denied"},
+		{"registry failure", io.ErrUnexpectedEOF, http.StatusInternalServerError, "delete-check", "failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -396,7 +498,7 @@ func TestDeleteSiteAuthorizationOutcomes(t *testing.T) {
 				t.Fatalf("audit events = %d, want 1", len(audit.events))
 			}
 			event := audit.events[0]
-			if event.Action != "delete" || event.Status != tt.wantStatus || event.Site != "demo" {
+			if event.Action != tt.wantAction || event.Status != tt.wantStatus || event.Site != "demo" {
 				t.Fatalf("audit event = %+v", event)
 			}
 		})

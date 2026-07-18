@@ -23,6 +23,8 @@
       --paper: #fff7d6;
       --saved: #ff9f1c;
       --saved-soft: #ffe6a3;
+      --mesh: #d9f4e1;
+      --net: #ffe3c2;
       --font-logo: 'Pacifico', 'Brush Script MT', cursive;
       --font-mono: 'Space Mono', ui-monospace, 'SF Mono', monospace;
     }
@@ -158,12 +160,16 @@
     }
 
     /* ─── my spots: site rows ─────────────────────────────────── */
+    /* A wrapping flex row, not a grid: the info column claims a real
+       minimum width and the action buttons drop to their own line when
+       the two can't share one — a grid auto column would instead crush
+       the info column to a sliver at mid widths. */
     .site {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
       gap: 18px 26px;
       align-items: center;
-      overflow: hidden;
       background: var(--card);
       border: 3px solid var(--ink);
       border-radius: 20px;
@@ -174,6 +180,7 @@
                   padding .35s ease, margin .35s ease, border-width .35s ease;
     }
     .site.vanish {
+      overflow: hidden;
       opacity: 0;
       transform: rotate(-2.5deg) translateY(18px) scale(.96);
       max-height: 0 !important;
@@ -183,6 +190,10 @@
       border-width: 0;
     }
 
+    .siteinfo {
+      flex: 1 1 300px;
+      min-width: 0;
+    }
     .siterow {
       display: flex;
       align-items: center;
@@ -193,9 +204,15 @@
       margin: 0;
       font: 700 21px/1.2 var(--font-mono);
       letter-spacing: .02em;
-      word-break: break-all;
+      overflow-wrap: anywhere;
     }
+    /* Access chips always name a surface·audience pair: "Mesh · everyone",
+       "🔒 Mesh · 4 invited", "Internet · anyone", "🔐 Internet · PIN".
+       Mint = mesh, amber = internet, filled = a restricted audience. */
     .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       border: 2px solid var(--ink);
       border-radius: 999px;
       padding: 6px 11px;
@@ -204,8 +221,19 @@
       text-transform: uppercase;
       white-space: nowrap;
     }
-    .badge.public { background: #d9f4e1; }
-    .badge.locked { background: var(--accent); color: #fff; }
+    .sitechips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 12px 0 0;
+    }
+    .badge .who { opacity: .72; }
+    .badge.mesh { background: var(--mesh); }
+    .badge.mesh.invited { background: var(--accent); color: #fff; }
+    .badge.mesh.invited .who { opacity: .85; }
+    .badge.net { background: var(--net); }
+    .badge.net.pin { background: var(--ink); color: var(--paper); }
+    .badge.net.pin .who { opacity: .85; }
 
     .siteurl {
       display: inline-block;
@@ -214,7 +242,7 @@
       color: var(--accent);
       text-decoration: underline;
       text-underline-offset: 4px;
-      word-break: break-all;
+      overflow-wrap: anywhere;
     }
     .sitemeta {
       margin: 11px 0 0;
@@ -224,6 +252,13 @@
       color: var(--mutedink);
     }
     .sitemeta b { color: var(--ink); }
+    .cfmeta {
+      margin: 10px 0 0;
+      font: 700 11px/1.7 var(--font-mono);
+      color: var(--mutedink);
+    }
+    .cfmeta a { color: var(--accent); text-underline-offset: 3px; }
+    .cfmeta.error { color: var(--bad); }
 
     .actions {
       display: flex;
@@ -252,6 +287,27 @@
     .btn-open { background: var(--go); color: #fff; }
     .btn-delete { color: var(--bad); }
     .btn-delete:hover:not(:disabled) { background: var(--bad); color: #fff; }
+
+    /* Download tab pinned over the card's top-left edge, same recipe
+       as the ZIP/VISIT chips on the site page. */
+    .zippill {
+      position: absolute;
+      top: -16px;
+      left: 22px;
+      border: 3px solid var(--ink);
+      border-radius: 999px;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 3px 4px 0 var(--ink);
+      padding: 9px 15px;
+      font: 700 11px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      text-decoration: none;
+      transition: transform .12s ease, box-shadow .12s ease, background .12s ease, color .12s ease;
+    }
+    .zippill:hover { transform: translate(-2px, -2px); box-shadow: 5px 6px 0 var(--ink); background: var(--ink); color: #fff; }
+    .zippill:active { transform: translate(1px, 2px); box-shadow: 1px 1px 0 var(--ink); }
 
     /* Armed delete: the button turns into a burning fuse — confirm
        with a second click before the bar runs out, or it disarms. */
@@ -680,13 +736,100 @@
     }
     #toast.show { transform: translate(-50%, 0); opacity: 1; }
 
+    /* ─── Internet publication dialog ─────────────────────────── */
+    .publish-dialog {
+      width: min(620px, calc(100vw - 32px));
+      border: 3px solid var(--ink);
+      border-radius: 22px;
+      background: var(--card);
+      color: var(--ink);
+      box-shadow: 11px 13px 0 var(--ink);
+      padding: 0;
+    }
+    .publish-dialog::backdrop {
+      background: rgba(21, 18, 30, .72);
+      backdrop-filter: blur(3px);
+    }
+    .publish-form { padding: 28px; }
+    .publish-form h2 {
+      margin: 0;
+      font: 700 21px/1.3 var(--font-mono);
+      letter-spacing: .02em;
+    }
+    .publish-intro,
+    .publish-help {
+      margin: 10px 0 0;
+      font: 700 11px/1.7 var(--font-mono);
+      color: var(--mutedink);
+    }
+    .visibility-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 22px;
+    }
+    .visibility-option {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 5px 11px;
+      align-items: start;
+      border: 3px solid var(--ink);
+      border-radius: 15px;
+      padding: 16px;
+      cursor: pointer;
+      box-shadow: 3px 4px 0 var(--ink);
+    }
+    .visibility-option:has(input:checked) { background: var(--paper); }
+    .visibility-option:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+    .visibility-option input { margin: 2px 0 0; accent-color: var(--accent); }
+    .visibility-option strong {
+      font: 700 12px/1.3 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .visibility-option span {
+      grid-column: 2;
+      font: 400 11px/1.55 var(--font-mono);
+      color: var(--mutedink);
+    }
+    .email-panel { margin-top: 20px; }
+    .email-panel label {
+      display: block;
+      margin-bottom: 8px;
+      font: 700 11px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    #cf-publish-emails {
+      width: 100%;
+      min-height: 116px;
+      resize: vertical;
+      border: 3px solid var(--ink);
+      border-radius: 13px;
+      background: #fff;
+      color: var(--ink);
+      padding: 13px 15px;
+      font: 700 13px/1.7 var(--font-mono);
+    }
+    .publish-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 24px;
+    }
+    /* Unpublish sits apart from cancel/submit — it leaves the internet,
+       not the dialog. */
+    .publish-dialog-actions .btn-delete { margin-right: auto; }
+
     /* ─── responsive ──────────────────────────────────────────── */
     @media (max-width: 720px) {
       .topbar { padding-top: 22px; }
-      .site { grid-template-columns: 1fr; padding: 22px 20px; }
+      .site { padding: 22px 20px; }
       .toolbar { grid-template-columns: 1fr; }
       #sort,
       .saved-toggle { width: 100%; }
+      .visibility-options { grid-template-columns: 1fr; }
+      .publish-form { padding: 22px 20px; }
     }
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; transition: none !important; }
@@ -721,7 +864,7 @@
     <section id="view-gallery" aria-labelledby="gallery-title" hidden>
       <div class="pagehead">
         <h1 class="title" id="gallery-title" data-text="Gallery">Gallery</h1>
-        <p class="sub">Every public spot on the mesh</p>
+        <p class="sub">Every spot open to the whole mesh</p>
       </div>
       <div class="toolbar">
         <label class="searchbox" for="search">
@@ -766,6 +909,37 @@
   </footer>
 
   <div id="toast" role="status" aria-live="polite"></div>
+
+  <dialog class="publish-dialog" id="cf-publish-dialog" aria-labelledby="cf-publish-title">
+    <form class="publish-form" id="cf-publish-form">
+      <h2 id="cf-publish-title">Publish to the internet</h2>
+      <p class="publish-intro" id="cf-publish-intro">Choose who can open the internet version. This is separate from who can open it on the mesh.</p>
+      <div class="visibility-options">
+        <label class="visibility-option">
+          <input type="radio" name="cf-visibility" value="public" checked>
+          <strong>Anyone with the link</strong>
+          <span>Open to the whole internet. No sign-in of any kind.</span>
+        </label>
+        <label class="visibility-option">
+          <input type="radio" name="cf-visibility" value="restricted">
+          <strong>PIN by email</strong>
+          <span>Only the addresses you list; each visitor gets a one-time PIN by email.</span>
+        </label>
+      </div>
+      <div class="email-panel" id="cf-email-panel" hidden>
+        <label for="cf-publish-emails">Allowed email addresses</label>
+        <textarea id="cf-publish-emails" autocomplete="off" spellcheck="false"
+                  placeholder="friend@example.com&#10;teammate@example.org"></textarea>
+        <p class="publish-help">One per line, or separate addresses with commas. Up to 100 exact addresses.</p>
+      </div>
+      <p class="publish-help" id="cf-access-unavailable" hidden>PIN by email is unavailable until one-time PIN delivery is configured.</p>
+      <div class="publish-dialog-actions">
+        <button class="btn btn-delete" type="button" id="cf-publish-unpublish" hidden>Unpublish</button>
+        <button class="btn" type="button" id="cf-publish-cancel">Cancel</button>
+        <button class="btn btn-open" type="submit" id="cf-publish-submit">Publish</button>
+      </div>
+    </form>
+  </dialog>
 
   <script>
     (() => {
@@ -927,24 +1101,267 @@
       let mySites = [];
       const siteList = $('sitelist');
       let armed = null; // { button, timer } for the pending delete
+	  let cloudflarePollTimer = null;
+	  let mineLoading = false;
+
+	  const internetPublishingError = (message) => {
+		const raw = String(message || '');
+		if (/context canceled/i.test(raw)) return 'Publishing was interrupted; retry to continue';
+		if (/https?:\/\/|\/client\/v4\/|\b(?:accounts|zones)\/[a-f0-9]{16,}/i.test(raw)) {
+		  return 'Publishing could not be completed; retry to continue';
+		}
+		return raw
+		  .replace(/Cloudflare Pages/gi, 'internet hosting')
+		  .replace(/Cloudflare Access/gi, 'email access')
+		  .replace(/Cloudflare/gi, 'internet publishing');
+	  };
+
+	  const cloudflareOperationActive = (site) => Boolean((site.cloudflare || {}).operation_active);
 
       const disarm = () => {
         if (!armed) return;
         armed.button.classList.remove('arming');
         armed.button.textContent = 'Delete';
+        armed.button.style.width = '';
+        armed.button.removeAttribute('title');
         clearTimeout(armed.timer);
         armed = null;
       };
 
-      const deleteSite = async (site, row, button) => {
-        disarm();
+      const cloudflareActionLabel = (site) => {
+        const cf = site.cloudflare || {};
+		if (cf.operation_active) return 'Publishing…';
+        if (!cf.publication) return 'Internet…';
+		if (['reserving', 'creating', 'claiming-project', 'restricting', 'publishing', 'activating-domain', 'protecting-custom-domain', 'deploying-restricted'].includes(cf.publication.status)) return 'Resume publish';
+		if (cf.publication.status === 'deleting-project' || cf.publication.status === 'project-deleted') return 'Internet cleanup pending';
+        if (cf.publication.status === 'failed') return 'Retry publish';
+        if (cf.publication.status === 'published' && (!cf.content_hash || cf.publication.content_hash === cf.content_hash)) return 'Internet…';
+        return 'Publish update';
+      };
+
+      const hasUncertainAccessCreate = (site) => {
+		if (cloudflareOperationActive(site)) return false;
+        const publication = (site.cloudflare || {}).publication;
+        return publication && publication.status === 'restricting' && publication.access_managed === false;
+      };
+
+	  const hasUncertainProjectState = (site) => {
+		if (cloudflareOperationActive(site)) return false;
+		const publication = (site.cloudflare || {}).publication;
+		return publication && ['creating', 'deleting-project'].includes(publication.status) && publication.project_managed === false;
+	  };
+
+      const refreshCloudflare = async (site) => {
+        const body = await api('/api/sites/' + encodeURIComponent(site.name) + '/cloudflare');
+        site.cloudflare = body;
+        renderDeploys();
+      };
+
+      const publishCloudflare = async (site, button, visibility, emails) => {
         button.disabled = true;
-        button.textContent = 'Deleting…';
+        button.textContent = 'Publishing…';
+		site.cloudflare = { ...(site.cloudflare || {}), operation_active: true };
+		renderDeploys();
+        try {
+          const body = await api('/api/sites/' + encodeURIComponent(site.name) + '/cloudflare/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ visibility, emails }),
+          });
+          site.cloudflare = body;
+          renderDeploys();
+          toast('Internet version published');
+        } catch (err) {
+          toast(internetPublishingError(err.message));
+          try { await refreshCloudflare(site); } catch {}
+        } finally {
+          button.disabled = false;
+          button.textContent = cloudflareActionLabel(site);
+        }
+      };
+
+      const publishDialog = $('cf-publish-dialog');
+      const publishForm = $('cf-publish-form');
+      const publishEmails = $('cf-publish-emails');
+      const publishEmailPanel = $('cf-email-panel');
+      const publishSubmit = $('cf-publish-submit');
+      const restrictedOption = publishForm.elements['cf-visibility'][1];
+      let pendingCloudflarePublish = null;
+
+      const syncCloudflarePublishForm = () => {
+        const visibility = publishForm.elements['cf-visibility'].value;
+        publishEmailPanel.hidden = visibility !== 'restricted';
+        publishEmails.required = visibility === 'restricted';
+        publishSubmit.textContent = 'Publish';
+        publishSubmit.disabled = visibility === 'restricted' && restrictedOption.disabled;
+      };
+
+      for (const option of publishForm.elements['cf-visibility']) {
+        option.addEventListener('change', syncCloudflarePublishForm);
+      }
+      $('cf-publish-cancel').addEventListener('click', () => publishDialog.close());
+      $('cf-publish-unpublish').addEventListener('click', () => {
+        if (!pendingCloudflarePublish) return;
+        const { site, button } = pendingCloudflarePublish;
+        publishDialog.close();
+        unpublishCloudflare(site, button);
+      });
+      publishDialog.addEventListener('close', () => { pendingCloudflarePublish = null; });
+
+      const openCloudflarePublish = (site, button) => {
+        const cf = site.cloudflare || {};
+        const publication = cf.publication || {};
+		const requestedMode = publication.requested_access_mode || publication.access_mode;
+		const mode = requestedMode === 'restricted' ? 'restricted' : 'public';
+        publishForm.elements['cf-visibility'].value = mode;
+		publishEmails.value = (publication.requested_access_emails || publication.access_emails || []).join('\n');
+        restrictedOption.disabled = !cf.access_enabled;
+        $('cf-access-unavailable').hidden = cf.access_enabled;
+        $('cf-publish-unpublish').hidden = !cf.publication;
+        $('cf-publish-title').textContent = publication.status === 'published'
+          ? 'Internet settings for ' + site.name
+          : 'Publish ' + site.name + ' to the internet';
+        $('cf-publish-intro').textContent =
+          'Choose who can open the internet version. This is separate from who can open it on the mesh (currently: ' +
+          (site.restricted ? site.allow_count + ' invited' : 'everyone') + ').';
+        pendingCloudflarePublish = { site, button };
+        syncCloudflarePublishForm();
+        publishDialog.showModal();
+        if (mode === 'restricted') publishEmails.focus();
+      };
+
+      publishForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!pendingCloudflarePublish) return;
+        const visibility = publishForm.elements['cf-visibility'].value;
+        const emails = visibility === 'restricted'
+          ? [...new Set(publishEmails.value.split(/[\s,;]+/).map((email) => email.trim()).filter(Boolean))]
+          : [];
+        if (visibility === 'restricted' && !emails.length) {
+          publishEmails.setCustomValidity('Add at least one email address.');
+          publishEmails.reportValidity();
+          publishEmails.setCustomValidity('');
+          return;
+        }
+        const { site, button } = pendingCloudflarePublish;
+        publishDialog.close();
+        await publishCloudflare(site, button, visibility, emails);
+      });
+
+      const unpublishCloudflare = async (site, button) => {
+        const prior = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Unpublishing…';
+        try {
+          await api('/api/sites/' + encodeURIComponent(site.name) + '/cloudflare', { method: 'DELETE' });
+          await refreshCloudflare(site);
+          toast('Internet version unpublished');
+        } catch (err) {
+          button.disabled = false;
+          button.textContent = prior;
+          toast(internetPublishingError(err.message));
+        }
+      };
+
+      const resolveCloudflareAccess = async (site, button) => {
+        const appName = 'Spot: ' + site.name;
+        const confirmed = window.confirm(
+          'First check the provider dashboard → Access → Applications and verify that no application named "' +
+          appName + '" exists.\n\nOnly continue if it is absent. Spot will also verify it through the provider API before clearing the uncertain create marker.'
+        );
+        if (!confirmed) return;
+        button.disabled = true;
+        button.textContent = 'Checking Access…';
+        try {
+          const body = await api('/api/sites/' + encodeURIComponent(site.name) + '/cloudflare/access/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm_absent: true }),
+          });
+		  await refreshCloudflare(site);
+          toast(body.publication && body.publication.access_managed
+            ? 'Access application recovered; resume or unpublish'
+            : 'Uncertain Access state cleared');
+        } catch (err) {
+          toast(internetPublishingError(err.message));
+          try { await refreshCloudflare(site); } catch {}
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Resolve Access state';
+        }
+      };
+
+	  const resolveCloudflareProject = async (site, button) => {
+		const publication = site.cloudflare.publication;
+		const resolution = window.prompt(
+		  'Check the provider dashboard → Workers & Pages for project "' + publication.project_name + '".\n\n' +
+			  'Enter owned if it is the Spot-created project, unmanaged if it belongs to someone else, or absent if it does not exist.'
+		);
+		if (resolution === null) return;
+		const normalized = resolution.trim().toLowerCase();
+		if (!['owned', 'unmanaged', 'absent'].includes(normalized)) {
+		  toast('Enter owned, unmanaged, or absent');
+		  return;
+		}
+		button.disabled = true;
+		button.textContent = 'Checking project…';
+		try {
+		  await api('/api/sites/' + encodeURIComponent(site.name) + '/cloudflare/project/resolve', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ resolution: normalized }),
+		  });
+		  await refreshCloudflare(site);
+		  toast('Internet project state resolved');
+		} catch (err) {
+		  toast(internetPublishingError(err.message));
+		  try { await refreshCloudflare(site); } catch {}
+		} finally {
+		  button.disabled = false;
+		  button.textContent = 'Resolve project state';
+		}
+	  };
+
+	  const resolveLegacyCloudflare = async (site, button) => {
+		const publication = site.cloudflare.publication;
+		const confirmed = window.confirm(
+		  'This upgraded publication has no reliable provider account or zone metadata.\n\n' +
+		  'Before continuing, manually remove Pages project "' + publication.project_name + '", hostname "' +
+		  publication.hostname + '", its DNS record, and any "Spot: ' + site.name + '" Access application.\n\n' +
+		  'Continue only after every resource is removed.'
+		);
+		if (!confirmed) return;
+		button.disabled = true;
+		button.textContent = 'Clearing legacy state…';
+		try {
+		  await api('/api/sites/' + encodeURIComponent(site.name) + '/cloudflare/legacy/resolve', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ confirm_resources_removed: true }),
+		  });
+		  await refreshCloudflare(site);
+		  toast('Legacy internet state cleared');
+		} catch (err) {
+		  toast(internetPublishingError(err.message));
+		  try { await refreshCloudflare(site); } catch {}
+		} finally {
+		  button.disabled = false;
+		  button.textContent = 'Resolve legacy state';
+		}
+	  };
+
+      const deleteSite = async (site, row, button) => {
+        const width = button.offsetWidth;
+        disarm();
+        button.style.width = width + 'px';
+        button.disabled = true;
+        button.textContent = 'Poof…';
         try {
           await api('/api/sites/' + encodeURIComponent(site.name), { method: 'DELETE' });
         } catch (err) {
           button.disabled = false;
           button.textContent = 'Delete';
+          button.style.width = '';
           toast(err.message);
           return;
         }
@@ -967,6 +1384,7 @@
           link.href = '/';
           link.textContent = 'Drop a folder on the home page';
           note.replaceChildren(link, ' to claim your first one.');
+		  scheduleCloudflarePoll();
           return;
         }
         $('deploys-note').hidden = true;
@@ -976,15 +1394,35 @@
           row.className = 'site';
 
           const info = document.createElement('div');
+          info.className = 'siteinfo';
           const head = document.createElement('div');
           head.className = 'siterow';
           const name = document.createElement('h2');
           name.className = 'sitename';
           name.textContent = site.name;
+          const cf = site.cloudflare || {};
+          head.append(name);
+          // Chips get their own row so placement never depends on how much
+          // of the title row happens to be left over.
+          const chips = document.createElement('div');
+          chips.className = 'sitechips';
           const badge = document.createElement('span');
-          badge.className = 'badge ' + (site.restricted ? 'locked' : 'public');
-          badge.textContent = site.restricted ? '🔒 locked · ' + site.allow_count : 'public';
-          head.append(name, badge);
+          badge.className = 'badge mesh' + (site.restricted ? ' invited' : '');
+          const meshWho = document.createElement('span');
+          meshWho.className = 'who';
+          meshWho.textContent = site.restricted ? '· ' + site.allow_count + ' invited' : '· everyone';
+          badge.append(site.restricted ? '🔒 Mesh ' : 'Mesh ', meshWho);
+          chips.append(badge);
+          if (cf.publication && cf.publication.status === 'published') {
+            const pin = cf.publication.access_mode === 'restricted';
+            const netBadge = document.createElement('span');
+            netBadge.className = 'badge net' + (pin ? ' pin' : '');
+            const netWho = document.createElement('span');
+            netWho.className = 'who';
+            netWho.textContent = pin ? '· PIN' : '· anyone';
+            netBadge.append(pin ? '🔐 Internet ' : 'Internet ', netWho);
+            chips.append(netBadge);
+          }
 
           const url = document.createElement('a');
           url.className = 'siteurl';
@@ -1002,8 +1440,53 @@
           slots[2].textContent = dateLabel(site.created_at);
           slots[3].textContent = rel(site.updated_at);
 
-          info.append(head, url, meta);
+          info.append(head, chips, url, meta);
           if ((site.tags || []).length) info.append(tagList(site.tags));
+
+          if (cf.enabled || cf.publication) {
+            const cfmeta = document.createElement('p');
+            cfmeta.className = 'cfmeta';
+			if (cf.operation_active) {
+			  cfmeta.textContent = 'Publishing internet version… It is safe to leave or reload this page.';
+			} else if (cf.publication && cf.publication.cleanup_unknown) {
+              cfmeta.classList.add('error');
+			  cfmeta.textContent = 'The legacy internet cleanup location is unknown; remove its external resources, then resolve the legacy state';
+            } else if (!cf.enabled && cf.publication && (cf.publication.project_managed || cf.publication.dns_managed || cf.publication.access_managed)) {
+              cfmeta.classList.add('error');
+              cfmeta.textContent = 'Restore internet publishing configuration before unpublishing or deleting this site';
+            } else if (cf.eligibility && cf.eligibility.eligible === false) {
+              cfmeta.classList.add('error');
+              cfmeta.textContent = 'Internet publishing blocked: ' + (cf.eligibility.reasons || []).slice(0, 2).join('; ');
+            } else if (cf.publication && cf.publication.status === 'failed') {
+              cfmeta.classList.add('error');
+              cfmeta.textContent = 'Internet publishing failed: ' + internetPublishingError(cf.publication.last_error || 'retry or unpublish to recover');
+            } else if (cf.publication && ['reserving', 'creating', 'claiming-project', 'restricting', 'publishing', 'activating-domain', 'protecting-custom-domain', 'deploying-restricted', 'deleting-project', 'project-deleted'].includes(cf.publication.status)) {
+              cfmeta.classList.add('error');
+			  cfmeta.textContent = hasUncertainProjectState(site)
+				? 'Internet project ownership is uncertain; resolve the project state manually'
+				: hasUncertainAccessCreate(site)
+				? 'Email access setup is uncertain; retry after it appears, or resolve the access state manually'
+				: cf.publication.last_error
+                ? 'Internet publishing paused: ' + internetPublishingError(cf.publication.last_error) + '; resume or unpublish to recover'
+                : 'Internet publishing was interrupted; resume it or unpublish to recover';
+            } else if (cf.publication) {
+              const hashKnown = Boolean(cf.content_hash);
+              const needsUpdate = cf.publication.status === 'published' && hashKnown && cf.publication.content_hash !== cf.content_hash;
+              const link = document.createElement('a');
+              link.href = 'https://' + cf.hostname + '/';
+              link.target = '_blank';
+              link.rel = 'noopener';
+              link.textContent = cf.hostname;
+              cfmeta.append(needsUpdate ? 'Internet version needs update: ' : 'Internet version: ', link);
+              if (cf.publication.access_mode === 'restricted') {
+                const count = (cf.publication.access_emails || []).length;
+                cfmeta.append(' · PIN by email · ' + count + ' ' + (count === 1 ? 'person' : 'people'));
+              } else {
+                cfmeta.append(' · anyone with the link');
+              }
+            }
+            if (cfmeta.textContent || cfmeta.childNodes.length) info.append(cfmeta);
+          }
 
           const actions = document.createElement('div');
           actions.className = 'actions';
@@ -1025,16 +1508,65 @@
           });
 
           const download = document.createElement('a');
-          download.className = 'btn';
+          download.className = 'zippill';
           download.href = downloadURL(site);
-          download.textContent = 'Download ZIP';
+          download.textContent = 'Zip ↓';
           download.setAttribute('download', site.name + '.zip');
+          download.setAttribute('aria-label', 'Download ' + site.name + ' as ZIP');
+
+          const cfPublish = document.createElement('button');
+          cfPublish.type = 'button';
+          cfPublish.className = 'btn';
+          cfPublish.textContent = cloudflareActionLabel(site);
+		  cfPublish.disabled = cf.operation_active || (cf.publication && cf.publication.cleanup_unknown) || hasUncertainProjectState(site) || (cf.enabled &&
+            (cf.eligibility && cf.eligibility.eligible === false));
+          cfPublish.addEventListener('click', () => openCloudflarePublish(site, cfPublish));
+
+          const cfUnpublish = document.createElement('button');
+          cfUnpublish.type = 'button';
+          cfUnpublish.className = 'btn btn-delete';
+          cfUnpublish.textContent = 'Unpublish';
+		  if (cf.operation_active) {
+			cfUnpublish.disabled = true;
+			cfUnpublish.title = 'Publishing is still in progress';
+		  }
+          if (cf.publication && cf.publication.cleanup_unknown) {
+            cfUnpublish.disabled = true;
+            cfUnpublish.title = 'Resolve the legacy internet resources manually';
+          }
+		  if (hasUncertainProjectState(site)) {
+			cfUnpublish.disabled = true;
+			cfUnpublish.title = 'Resolve the uncertain Pages project ownership first';
+		  }
+          cfUnpublish.addEventListener('click', () => unpublishCloudflare(site, cfUnpublish));
+
+		  const cfResolveAccess = document.createElement('button');
+		  cfResolveAccess.type = 'button';
+		  cfResolveAccess.className = 'btn';
+		  cfResolveAccess.textContent = 'Resolve Access state';
+		  cfResolveAccess.addEventListener('click', () => resolveCloudflareAccess(site, cfResolveAccess));
+
+		  const cfResolveProject = document.createElement('button');
+		  cfResolveProject.type = 'button';
+		  cfResolveProject.className = 'btn';
+		  cfResolveProject.textContent = 'Resolve project state';
+		  cfResolveProject.addEventListener('click', () => resolveCloudflareProject(site, cfResolveProject));
+
+		  const cfResolveLegacy = document.createElement('button');
+		  cfResolveLegacy.type = 'button';
+		  cfResolveLegacy.className = 'btn';
+		  cfResolveLegacy.textContent = 'Resolve legacy state';
+		  cfResolveLegacy.addEventListener('click', () => resolveLegacyCloudflare(site, cfResolveLegacy));
 
           const del = document.createElement('button');
           del.type = 'button';
           del.className = 'btn btn-delete';
           del.textContent = 'Delete';
           del.setAttribute('aria-label', 'Delete ' + site.name);
+		  if (cf.operation_active) {
+			del.disabled = true;
+			del.title = 'Publishing is still in progress';
+		  }
           del.addEventListener('click', (e) => {
             e.stopPropagation();
             if (del.disabled) return;
@@ -1043,17 +1575,39 @@
               return;
             }
             disarm();
+            // Freeze the button's width before swapping the label so arming
+            // never reflows the row — the armed copy must fit that width.
+            del.style.width = del.offsetWidth + 'px';
             del.classList.add('arming');
-            del.textContent = 'Sure? Click again';
+            del.textContent = 'Sure?';
+            del.title = 'Click again to delete';
             armed = { button: del, timer: setTimeout(disarm, 4000) };
           });
 
           actions.append(open, copy);
-          if (site.download_allowed !== false) actions.append(download);
+          if (site.download_allowed !== false) row.append(download);
+          if (cf.enabled) {
+            actions.append(cfPublish);
+			if (hasUncertainAccessCreate(site)) actions.append(cfResolveAccess);
+			if (hasUncertainProjectState(site)) actions.append(cfResolveProject);
+			if (cf.publication && cf.publication.cleanup_unknown) actions.append(cfResolveLegacy);
+            // Unpublish normally lives inside the Internet… dialog; it only
+            // returns to the row when the dialog is unreachable (the publish
+            // button is disabled for an ineligible site).
+            if (cf.publication && cf.eligibility && cf.eligibility.eligible === false) actions.append(cfUnpublish);
+          } else if (cf.publication && !cf.publication.cleanup_unknown && cf.publication.project_managed === false && cf.publication.dns_managed === false && cf.publication.access_managed === false) {
+            actions.append(cfUnpublish);
+          } else if (cf.publication) {
+			if (cf.publication.cleanup_unknown) actions.append(cfResolveLegacy);
+            cfUnpublish.disabled = true;
+            cfUnpublish.title = 'Restore internet publishing configuration to unpublish';
+            actions.append(cfUnpublish);
+          }
           actions.append(del);
           row.append(info, actions);
           siteList.appendChild(row);
         }
+		scheduleCloudflarePoll();
       };
 
       // An armed delete disarms on Escape or a click anywhere else.
@@ -1064,14 +1618,34 @@
         if (e.key === 'Escape') disarm();
       });
 
-      const loadMine = async () => {
+	  const scheduleCloudflarePoll = () => {
+		if (cloudflarePollTimer) clearTimeout(cloudflarePollTimer);
+		cloudflarePollTimer = null;
+		if (!mySites.some(cloudflareOperationActive)) return;
+		cloudflarePollTimer = setTimeout(() => {
+		  cloudflarePollTimer = null;
+		  loadMine(true);
+		}, 1500);
+	  };
+
+      const loadMine = async (silent = false) => {
+		if (mineLoading) {
+		  scheduleCloudflarePoll();
+		  return;
+		}
+		mineLoading = true;
         try {
           const body = await api('/api/sites/mine');
           mySites = body.sites || [];
           renderDeploys();
         } catch (err) {
-          $('deploys-sub').textContent = 'Something went wrong';
-          showNote('deploys-note', 'Could not load your spots', err.message, true);
+		  if (!silent) {
+			$('deploys-sub').textContent = 'Something went wrong';
+			showNote('deploys-note', 'Could not load your spots', err.message, true);
+		  }
+		} finally {
+		  mineLoading = false;
+		  scheduleCloudflarePoll();
         }
       };
 

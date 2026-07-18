@@ -45,6 +45,12 @@ type galleryBackfillSiteResult struct {
 	ScreenshotSkipped bool
 }
 
+type galleryBackfillSitePlan struct {
+	result     galleryBackfillSiteResult
+	merged     SiteMetadata
+	restricted bool
+}
+
 func runGalleryBackfillCommand(ctx context.Context, args []string) error {
 	cfg := defaultConfigFromEnv()
 	opts := galleryBackfillOptions{
@@ -162,13 +168,106 @@ func (s *Server) backfillGallery(ctx context.Context, registry *SiteRegistry, op
 }
 
 func (s *Server) backfillGallerySite(ctx context.Context, registry *SiteRegistry, site SiteRecord, opts galleryBackfillOptions) (galleryBackfillSiteResult, error) {
+	if opts.Write {
+		// A killed backfill cannot run its deferred close. A later invocation
+		// may legitimately find nothing left to write, so expire an hour-old
+		// lease before planning work while leaving recent/live runs protected.
+		if err := registry.RecoverStaleExternalContentMutation(ctx, site.Name, time.Now().Add(-time.Hour)); err != nil {
+			return galleryBackfillSiteResult{}, err
+		}
+	}
+	plan, err := s.planGalleryBackfillSite(ctx, site, opts)
+	if err != nil {
+		return galleryBackfillSiteResult{}, err
+	}
+
+	if !opts.Write {
+		log.Printf("backfill-gallery: %s metadata=%v spot_json=%v screenshot=%v restricted=%v",
+			site.Name, plan.result.MetadataUpdated, plan.result.SpotJSONWritten, plan.result.ScreenshotWritten, plan.restricted)
+		return plan.result, nil
+	}
+	var screenshotData []byte
+	if plan.result.ScreenshotWritten {
+		data, err := captureBackfillScreenshot(ctx, opts, site.Name, backfillSiteURL(opts.Scheme, s.spotDomain, site.Name))
+		if err != nil {
+			return galleryBackfillSiteResult{}, fmt.Errorf("%s: capture screenshot: %w", site.Name, err)
+		}
+		screenshotData = data
+
+		// Screenshot capture is intentionally outside the mutation lease and can
+		// take several seconds. Re-read both registry and deployed metadata after
+		// it completes so a deploy that finished during capture wins over this
+		// backfill instead of having its newer _spot.json overwritten.
+		current, err := registry.SiteMetadata(ctx, site.Name)
+		if err != nil {
+			return galleryBackfillSiteResult{}, err
+		}
+		site.Title = current.Title
+		site.Description = current.Description
+		site.Tags = cloneSiteTags(current.Tags)
+		plan, err = s.planGalleryBackfillSite(ctx, site, opts)
+		if err != nil {
+			return galleryBackfillSiteResult{}, err
+		}
+		if !plan.result.ScreenshotWritten {
+			screenshotData = nil
+		}
+	}
+	if plan.result.MetadataUpdated {
+		if err := registry.UpdateSiteMetadata(ctx, site.Name, plan.merged); err != nil {
+			return galleryBackfillSiteResult{}, err
+		}
+	}
+	if plan.result.SpotJSONWritten || plan.result.ScreenshotWritten {
+		// The backfill command runs out of process from the API. Bracket its
+		// served-file writes durably so a concurrent deploy cannot clear an old
+		// hash after interleaved backfill content has changed storage.
+		if err := func() (retErr error) {
+			leaseOwner, err := registry.BeginExternalContentMutation(ctx, site.Name)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := registry.EndExternalContentMutation(closeCtx, site.Name, leaseOwner); err != nil {
+					if retErr == nil {
+						retErr = err
+					} else {
+						log.Printf("backfill-gallery: %s close content mutation: %v", site.Name, err)
+					}
+				}
+			}()
+			if plan.result.SpotJSONWritten {
+				data, err := marshalSiteMetadataFile(plan.merged)
+				if err != nil {
+					return err
+				}
+				if err := s.sites.Put(ctx, site.Name, siteMetadataFileName, "application/json", data); err != nil {
+					return fmt.Errorf("%s: write %s: %w", site.Name, siteMetadataFileName, err)
+				}
+			}
+			if plan.result.ScreenshotWritten {
+				if err := s.sites.Put(ctx, site.Name, "_screenshot.png", "image/png", screenshotData); err != nil {
+					return fmt.Errorf("%s: write _screenshot.png: %w", site.Name, err)
+				}
+			}
+			return nil
+		}(); err != nil {
+			return galleryBackfillSiteResult{}, err
+		}
+	}
+	return plan.result, nil
+}
+
+func (s *Server) planGalleryBackfillSite(ctx context.Context, site SiteRecord, opts galleryBackfillOptions) (galleryBackfillSitePlan, error) {
 	files, err := currentDeployMetadataFiles(ctx, s.sites, site.Name)
 	if err != nil {
-		return galleryBackfillSiteResult{}, fmt.Errorf("%s: read deployed files: %w", site.Name, err)
+		return galleryBackfillSitePlan{}, fmt.Errorf("%s: read deployed files: %w", site.Name, err)
 	}
 	meta, err := metadataForDeploy(site.Name, files)
 	if err != nil {
-		return galleryBackfillSiteResult{}, fmt.Errorf("%s: %w", site.Name, err)
+		return galleryBackfillSitePlan{}, fmt.Errorf("%s: %w", site.Name, err)
 	}
 	restricted, _, _ := s.policySummaryForSite(ctx, site.Name)
 	if opts.AITags && !restricted && !meta.TagsSpecified && len(site.Tags) == 0 {
@@ -178,51 +277,21 @@ func (s *Server) backfillGallerySite(ctx context.Context, registry *SiteRegistry
 	merged := mergeBackfillMetadata(site, meta, opts.Force)
 	spotJSONExists, err := siteFileExists(ctx, s.sites, site.Name, siteMetadataFileName)
 	if err != nil {
-		return galleryBackfillSiteResult{}, err
+		return galleryBackfillSitePlan{}, err
 	}
 	previewExists := s.hasSitePreview(ctx, site.Name)
-
-	siteResult := galleryBackfillSiteResult{
+	result := galleryBackfillSiteResult{
 		MetadataUpdated: shouldUpdateBackfillMetadata(site, merged),
 		SpotJSONWritten: opts.WriteSpotJSON && (opts.Force || !spotJSONExists),
 	}
 	if opts.Screenshots {
 		if restricted {
-			siteResult.ScreenshotSkipped = true
+			result.ScreenshotSkipped = true
 		} else {
-			siteResult.ScreenshotWritten = opts.Force || !previewExists
+			result.ScreenshotWritten = opts.Force || !previewExists
 		}
 	}
-
-	if !opts.Write {
-		log.Printf("backfill-gallery: %s metadata=%v spot_json=%v screenshot=%v restricted=%v",
-			site.Name, siteResult.MetadataUpdated, siteResult.SpotJSONWritten, siteResult.ScreenshotWritten, restricted)
-		return siteResult, nil
-	}
-	if siteResult.MetadataUpdated {
-		if err := registry.UpdateSiteMetadata(ctx, site.Name, merged); err != nil {
-			return galleryBackfillSiteResult{}, err
-		}
-	}
-	if siteResult.SpotJSONWritten {
-		data, err := marshalSiteMetadataFile(merged)
-		if err != nil {
-			return galleryBackfillSiteResult{}, err
-		}
-		if err := s.sites.Put(ctx, site.Name, siteMetadataFileName, "application/json", data); err != nil {
-			return galleryBackfillSiteResult{}, fmt.Errorf("%s: write %s: %w", site.Name, siteMetadataFileName, err)
-		}
-	}
-	if siteResult.ScreenshotWritten {
-		data, err := captureBackfillScreenshot(ctx, opts, site.Name, backfillSiteURL(opts.Scheme, s.spotDomain, site.Name))
-		if err != nil {
-			return galleryBackfillSiteResult{}, fmt.Errorf("%s: capture screenshot: %w", site.Name, err)
-		}
-		if err := s.sites.Put(ctx, site.Name, "_screenshot.png", "image/png", data); err != nil {
-			return galleryBackfillSiteResult{}, fmt.Errorf("%s: write _screenshot.png: %w", site.Name, err)
-		}
-	}
-	return siteResult, nil
+	return galleryBackfillSitePlan{result: result, merged: merged, restricted: restricted}, nil
 }
 
 func currentDeployMetadataFiles(ctx context.Context, sites SiteStorage, site string) ([]deployFile, error) {

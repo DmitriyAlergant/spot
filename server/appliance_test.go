@@ -69,6 +69,7 @@ func TestSQLiteSiteRegistry(t *testing.T) {
 	}
 	if err := registry.RecordDeploy(ctx, DeployAuditEvent{
 		Site: "demo", Actor: actor, Action: authz.Action, Status: "success", FileCount: 2, TotalBytes: 12,
+		ContentGeneration: authz.ContentGeneration,
 	}); err != nil {
 		t.Fatalf("record deploy: %v", err)
 	}

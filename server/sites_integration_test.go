@@ -39,16 +39,20 @@ func TestSiteRegistryListsAndDeletes(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
+	generations := make(map[string]int64, len(siteNames))
 	for _, site := range siteNames {
-		if _, err := registry.AuthorizeDeploy(ctx, site, alice); err != nil {
+		authz, err := registry.AuthorizeDeploy(ctx, site, alice)
+		if err != nil {
 			t.Fatalf("claim %s: %v", site, err)
 		}
+		generations[site] = authz.ContentGeneration
 	}
-	// Two successful deploys of the same site: the listing must report
-	// the most recent one's size, and ignore failed attempts.
+	// Two successful deploys of the same site: the listing reports the most
+	// recent successful size, but a later failed storage attempt makes the
+	// content hash unsafe to treat as current.
 	for _, event := range []DeployAuditEvent{
-		{Site: "it-reg-one", Actor: alice, Action: "create", Status: "success", FileCount: 3, TotalBytes: 100},
-		{Site: "it-reg-one", Actor: alice, Action: "update", Status: "success", FileCount: 5, TotalBytes: 999},
+		{Site: "it-reg-one", Actor: alice, Action: "create", Status: "success", FileCount: 3, TotalBytes: 100, ContentHash: "old-hash", ContentGeneration: generations["it-reg-one"]},
+		{Site: "it-reg-one", Actor: alice, Action: "update", Status: "success", FileCount: 5, TotalBytes: 999, ContentHash: "latest-hash", ContentGeneration: generations["it-reg-one"]},
 		{Site: "it-reg-one", Actor: alice, Action: "update", Status: "failed", FileCount: 9, TotalBytes: 9999},
 	} {
 		if err := registry.RecordDeploy(ctx, event); err != nil {
@@ -66,6 +70,12 @@ func TestSiteRegistryListsAndDeletes(t *testing.T) {
 	}
 	if stats["it-reg-one"] != [2]int64{5, 999} {
 		t.Errorf("it-reg-one stats = %v, want latest success {5 999}", stats["it-reg-one"])
+	}
+	for _, site := range owned {
+		if site.Name == "it-reg-one" && (site.ContentHash != "latest-hash" || !site.ContentHashUncertain) {
+			t.Errorf("it-reg-one hash state = %q uncertain=%v, want latest-hash marked uncertain",
+				site.ContentHash, site.ContentHashUncertain)
+		}
 	}
 	if stats["it-reg-two"] != [2]int64{0, 0} {
 		t.Errorf("it-reg-two stats = %v, want zero without audits", stats["it-reg-two"])
