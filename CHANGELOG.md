@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-18
+
+### Added
+
+- Added optional Cloudflare Pages publishing with public or email-restricted access, durable ownership and recovery state, reload-safe publication jobs, and management controls in `/spots`. (#14, #15)
+- Added `_access.json` maintainer delegation, manageable-site APIs, and owner-recoverable tombstones while preserving the original owner's permanent recovery claim. (#17)
+- Added Spot Show commands for building, deploying, and watching report sites with Markdown, Mermaid, diffs, terminal output, JSON, images, and sandboxed HTML. (#10)
+- Added a public, aggregate-only `/stats` page for Spot growth, activity, freshness, tags, and preview coverage. (#11)
+- Added a responsive `/help` field guide with deep-linked workflows, release notes, and agent setup guidance. (#16)
+- Added automatic gallery preview capture for Spot Show deploys and a saved-spots gallery filter.
+- Added request-aware `/agent.md` instructions and a full-instructions copy action that does not require agents to fetch an external URL. (#13)
+
+### Fixed
+
+- Preserved uploaded files' original content types when serving them.
+- Improved gallery cards with separate author attribution, stable row sizing, and safer text wrapping across viewport widths.
+- Bounded generated Cloudflare Pages project names to the provider's length limit. (#15)
+
 ## [0.3.0] - 2026-06-23
 
 ### Added
@@ -42,7 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - First tagged release: prebuilt multi-arch images and CI/release pipeline.
 
-[Unreleased]: https://github.com/melonamin/spot/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/melonamin/spot/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/melonamin/spot/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/melonamin/spot/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/melonamin/spot/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/melonamin/spot/releases/tag/v0.1.0
