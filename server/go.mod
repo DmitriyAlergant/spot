@@ -7,6 +7,7 @@ toolchain go1.26.4
 require (
 	github.com/coder/websocket v1.8.14
 	github.com/minio/minio-go/v7 v7.2.0
+	github.com/zeebo/blake3 v0.2.4
 	golang.org/x/time v0.15.0
 	modernc.org/sqlite v1.52.0
 )

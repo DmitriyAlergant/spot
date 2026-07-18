@@ -142,11 +142,19 @@ Tables:
   Each row also records an `owner` (the creator's identity key) so a site
   can keep per-visitor data and filter to `list({ mine: true })`. The column
   is added to existing databases by an idempotent migration in `server/db.go`.
-- `sites`: site ownership records.
+- `sites`: site ownership records plus durable content-dirty, generation, and
+  external-mutation state. Deploy authorization claims a generation before
+  storage can change, and a successful audit clears the marker only if that
+  generation is still current and no out-of-process backfill is active. This
+  prevents interrupted, unaudited, or interleaved mutations from making an old
+  content hash look current. Backfill uses an exclusive owner-token lease;
+  only its holder can close it, and an invocation can recover a lease left
+  stale for an hour by a killed process.
 - `site_deploy_audit`: deploy and delete audit history.
 - `site_cloudflare_publications`: optional Cloudflare Pages publication
-  metadata, including project name, hostname, latest deployment, content hash,
-  status, and last error.
+  metadata, including account/zone ownership, explicit project/DNS cleanup
+  ownership, managed DNS record identity, project name, hostname, latest
+  deployment, content hash, status, and last error.
 
 The document store is implemented in `server/docstore.go`. It stores JSON blobs,
 publishes realtime document events after successful mutations, and can purge a
@@ -236,6 +244,9 @@ Cloudflare publishing is implemented in `server/cloudflare.go` and exposed from
 
 - `GET /api/sites/{name}/cloudflare`
 - `POST /api/sites/{name}/cloudflare/publish`
+- `POST /api/sites/{name}/cloudflare/access/resolve`
+- `POST /api/sites/{name}/cloudflare/project/resolve`
+- `POST /api/sites/{name}/cloudflare/legacy/resolve`
 - `DELETE /api/sites/{name}/cloudflare`
 
 Each route uses `SiteManager.CanManageSite`, so site owners can publish their
@@ -245,30 +256,80 @@ guard rejects them.
 
 The publish flow:
 
-1. Take the per-site mutation lock.
-2. Snapshot current `SiteStorage` files into memory.
-3. Release the lock before making Cloudflare API calls.
-4. Recheck eligibility server-side. Sites are rejected if they contain
-   `_access.json`, root `/spot.js`, Spot SDK/runtime references, same-origin
-   `/api/` usage, Pages Functions or Worker files, `_routes.json`, or files
-   over 25 MiB.
+1. Take the per-site Cloudflare-operation lock, then the site mutation lock.
+2. Recheck ownership, snapshot current `SiteStorage` files into memory, and
+   validate eligibility server-side. `_access.json` is omitted from the export
+   and its bytes do not participate in the Cloudflare content hash. Sites are
+   rejected if they contain root `/spot.js`, Spot SDK/runtime references, same-origin
+   `/api/` usage, Pages Functions or Worker files, `_routes.json`, `_headers`,
+   `_redirects`, files over 25 MiB, or more than 20,000 files.
+3. Insert a durable `reserving` publication row while the site lock is still
+   held. Site deletion now sees that row and returns `409 Conflict` even if the
+   browser disconnects or Cloudflare is slow. Applied Access policy and pending
+   requested policy are stored separately, so a retry defaults to the original
+   restricted allowlist without claiming that protection already exists.
+4. Release the site lock before network calls; deploys can continue while the
+   Cloudflare snapshot uploads, but publish/unpublish remain serialized.
 5. Create only the Spot-owned Pages project name
    `<SPOT_CLOUDFLARE_PROJECT_PREFIX><site>`. If that project already exists
    without Spot publication metadata, publishing fails as an unmanaged project
-   conflict.
-6. Use the Wrangler-compatible direct-upload sequence: upload token,
-   missing-hash check, asset upload, hash upsert, and deployment manifest.
-7. Attach `<site>.<SPOT_CLOUDFLARE_BASE_DOMAIN>`.
-8. Create a CNAME to `<project>.pages.dev` only when no conflicting DNS record
+   conflict. The durable `project_managed` bit is false before every create
+   attempt and becomes true only after a definite successful create response
+   is recorded. A separate `claiming-project` marker records that successful
+   response before the ownership bit changes, so a retry can finish a failed
+   state write without repeating the create. An older ambiguous `creating`
+   state remains blocked until the owner verifies the project as owned,
+   unmanaged, or absent through the project-resolution route.
+6. For an email-restricted first publish, create one Spot-owned Cloudflare
+   Access application protecting `<project>.pages.dev` and
+   `*.<project>.pages.dev` before any content upload. Its inline Allow policy
+   contains normalized exact-email selectors and uses the configured OTP
+   identity provider. Access ownership and its exact application ID are stored
+   durably before continuing.
+7. Use the Wrangler-compatible direct-upload sequence: upload token,
+   missing-hash check, asset upload, hash upsert, and deployment manifest. A
+   durable `publishing` phase makes interrupted updates resumable without being
+   reported as current.
+8. Attach `<site>.<SPOT_CLOUDFLARE_BASE_DOMAIN>`.
+9. Create a CNAME to `<project>.pages.dev` only when no conflicting DNS record
    exists.
-9. Upsert `site_cloudflare_publications` with the latest deployment metadata.
+10. For a restricted publication, wait for the custom Pages domain to become
+    active, then add it to the same Access application. If that update fails on
+    a first publish, remove the custom domain and Spot-owned DNS record with a
+    background cleanup; the Pages aliases remain protected. For a transition
+    to public, remove Access only after the deployment and domain are ready.
+11. Upsert `site_cloudflare_publications` with the latest deployment metadata.
+   Request cancellation does not cancel this short durable state write.
 
-Unpublish removes the matching DNS record, removes the Pages custom domain,
-deletes the Spot-owned Pages project, and deletes the publication row. Spot does
-not use the `CF_API_TOKEN` intended for Caddy DNS-01 TLS. Cloudflare API tokens
-cannot precisely express "only create new subdomains under this base domain",
-so Spot enforces project names, hostname shape, DNS conflict checks, and
-publication ownership in server code.
+Publication rows retain the account and zone where they were created, so later
+configuration changes cannot redirect cleanup at the wrong Cloudflare
+resources. Locationless rows from older schemas fail closed instead of falling
+back to current configuration. Rows also record whether Spot created (or
+caused Pages to create) the exact DNS record ID; matching CNAME contents alone
+are never deletion proof. Unpublish removes only Spot-managed DNS, removes the
+Pages custom domain, deletes the Spot-owned Pages project, then deletes its
+exact stored Access application before deleting the publication row. Access
+policy state belongs to the Cloudflare publication and is deliberately
+independent of the internal site's `_access.json`. Spot does not use the
+`CF_API_TOKEN` intended for Caddy
+DNS-01 TLS. Cloudflare API tokens cannot precisely express "only create new
+subdomains under this base domain", so Spot enforces project names, hostname
+shape, DNS conflict checks, and publication ownership in server code.
+
+An Access create with a lost response remains in `restricting` and cannot be
+repeated or forgotten based only on an eventually consistent empty list. A
+retry adopts an exact matching application when it becomes visible. If the
+create never committed, the owner can use the manual resolution route after
+checking Cloudflare Zero Trust for `Spot: <site>`; the route repeats the exact
+API lookup and either adopts the app or, with explicit absence confirmation,
+changes the marker to a normal retryable failure.
+
+Legacy rows whose original account or zone is unavailable remain
+`cleanup_unknown`; Spot cannot safely discover or delete those resources using
+current configuration. After the owner manually removes the old Pages project,
+DNS record, and Access application, the legacy-resolution route provides an
+explicit confirmation path that deletes the local guard row and unlocks the
+site.
 
 ## Identity Model
 

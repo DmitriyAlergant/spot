@@ -525,7 +525,18 @@ Important APIs:
 - `GET /api/sites/{name}/cloudflare` returns optional Cloudflare Pages
   publication status.
 - `POST /api/sites/{name}/cloudflare/publish` publishes an eligible site
-  to Cloudflare Pages.
+  to Cloudflare Pages. Its optional JSON body is `{"visibility":"public"}`
+  or `{"visibility":"restricted","emails":["friend@example.com"]}`.
+- `POST /api/sites/{name}/cloudflare/access/resolve` recovers an Access create
+  whose network outcome is uncertain. `{"confirm_absent":true}` may clear the
+  attempt only after the owner has verified in Cloudflare that the named Spot
+  application is absent; a matching application is adopted instead.
+- `POST /api/sites/{name}/cloudflare/project/resolve` reconciles an uncertain
+  Pages create after the owner verifies the project as `owned`, `unmanaged`, or
+  `absent` in Cloudflare.
+- `POST /api/sites/{name}/cloudflare/legacy/resolve` clears an upgraded legacy
+  row after `{"confirm_resources_removed":true}` confirms its external Pages,
+  DNS, and Access resources were removed manually.
 - `DELETE /api/sites/{name}/cloudflare` unpublishes it from Cloudflare.
 - `DELETE /api/sites/{name}` deletes a site, its uploads, private docs,
   and registry claim.
@@ -555,9 +566,19 @@ are present. A partial Cloudflare config disables the feature, logs the
 missing keys, and reports `config_status: "partial"` from the status API.
 
 Cloudflare publishing rejects sites that depend on Spot runtime behavior:
-`_access.json`, root `/spot.js`, `window.spot`, `spot.`, same-origin
+root `/spot.js`, `window.spot`, `spot.`, same-origin
 `/api/` references, Pages Functions files, Workers files, `_routes.json`,
-or any file over 25 MiB.
+`_headers`, `_redirects`, or any file over 25 MiB.
+Sites with more than 20,000 files are also rejected to stay within the
+Cloudflare Pages Direct Upload limit available on every plan.
+
+Cloudflare publication access is separate from Spot's private mesh.
+`_access.json` continues to control only the internal Spot copy and is never
+translated into a Cloudflare policy or uploaded to Pages. Changes to it do not
+make the Cloudflare copy stale. At publish time, the owner chooses either
+public access or an exact email allowlist. Restricted copies use Cloudflare
+Access email one-time PINs and protect the custom hostname, production
+`<project>.pages.dev`, and wildcard preview hostnames.
 
 Configure it:
 
@@ -567,11 +588,15 @@ Configure it:
    example `pages.example.com`.
 3. Create a temporary bootstrap token:
    - For an account-owned token, use Cloudflare dashboard
-     `Manage Account` -> `Account API Tokens` -> `Create Token`.
+     `Manage Account` -> `Account API Tokens` -> `Create Token` and grant
+     `Account API Tokens Write` plus
+     `Access: Organizations, Identity Providers, and Groups Write` for the
+     target account.
    - For a user token, use Cloudflare dashboard
-     `My Profile` -> `API Tokens` -> `Create Token`.
-   - Use the `Create additional tokens` template. Cloudflare documents
-     that this template is required for API token creation via API.
+     `My Profile` -> `API Tokens` -> `Create Token`, then use the
+     `Create additional tokens` template. Add
+     `Access: Organizations, Identity Providers, and Groups Write` for the
+     target account.
    - Add a short TTL or IP restriction if practical.
    - Copy the token once; Cloudflare only shows the secret once.
 4. Run the setup script locally:
@@ -584,6 +609,14 @@ Configure it:
      --base-domain pages.example.com
    ```
 
+   The script defaults to an account-owned bootstrap token and creates an
+   account-owned runtime token. It reuses an existing One-time PIN identity
+   provider or creates `Spot email one-time PIN`. If the bootstrap token came
+   from **My Profile** instead, add `--bootstrap-token-kind user`; the runtime
+   token will then be user-owned. The generated runtime token is limited to
+   Cloudflare Pages Write and Access Apps and Policies Write on the account,
+   plus DNS Write on the selected zone.
+
 5. Add the printed env vars to Spot:
 
    ```env
@@ -592,11 +625,20 @@ Configure it:
    SPOT_CLOUDFLARE_ZONE_ID=...
    SPOT_CLOUDFLARE_BASE_DOMAIN=pages.example.com
    SPOT_CLOUDFLARE_PROJECT_PREFIX=spot-
+   SPOT_CLOUDFLARE_ACCESS_IDP_ID=...
    ```
 
 6. Restart Spot, open `/spots`, and use `Publish to Cloudflare` on an
-   eligible site. Use `Publish update` after redeploying the Spot site.
-   Use `Unpublish` before deleting the Spot site.
+   eligible site. Choose Public or Email restricted and enter up to 100 exact
+   email addresses. Use `Cloudflare settings` to change visibility or the
+   allowlist, and `Unpublish` before deleting the Spot site. If an Access create
+   is interrupted before its result is known, `/spots` retains the requested
+   allowlist and offers `Resolve Access state`: first check Zero Trust -> Access
+   -> Applications for the displayed `Spot: <site>` application, then confirm
+   it is absent. Spot checks the API again before making the publish retryable.
+   Similar recovery actions appear when Pages project ownership is uncertain or
+   an upgraded publication lacks the account and zone metadata needed for safe
+   automatic cleanup.
 
 Cloudflare tokens cannot precisely enforce "only new subdomains under this
 base domain". Spot enforces the project prefix, project ownership metadata,
@@ -607,7 +649,9 @@ Spot's Cloudflare Pages publisher.
 Cloudflare references: [create API tokens](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/),
 [create tokens via API](https://developers.cloudflare.com/fundamentals/api/how-to/create-via-api/),
 [account-owned tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/),
-and [Pages REST API](https://developers.cloudflare.com/pages/configuration/api/).
+[Pages REST API](https://developers.cloudflare.com/pages/configuration/api/),
+[Access applications](https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/subresources/applications/methods/create/),
+and [one-time PIN login](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/one-time-pin/).
 
 ## Files, Text AI, Image Generation, and Slack
 
@@ -698,6 +742,31 @@ just e2e
 `just test` runs Go vet/unit tests plus the CLI smoke test. `just e2e` starts
 compose, deploys the demo site, exercises static
 serving, DB APIs, uploads, site deletion, and platform pages.
+
+Cloudflare publishing also has an opt-in live contract test. Use a dedicated
+test zone/token because this creates and then removes a real Pages project,
+custom domain, and DNS record:
+
+```sh
+SPOT_CLOUDFLARE_API_TOKEN=... \
+SPOT_CLOUDFLARE_ACCOUNT_ID=... \
+SPOT_CLOUDFLARE_ZONE_ID=... \
+SPOT_CLOUDFLARE_BASE_DOMAIN=spot-tests.example.com \
+just test-cloudflare-live
+```
+
+To exercise the full Access lifecycle, also provide the OTP identity provider
+ID and a dedicated recipient address. The test verifies that the custom,
+production, and preview hostnames challenge through Access, then transitions
+the same publication back to public before cleanup:
+
+```sh
+SPOT_CLOUDFLARE_ACCESS_IDP_ID=... \
+SPOT_CLOUDFLARE_LIVE_TEST_EMAIL=you@example.com \
+just test-cloudflare-live
+```
+
+Normal unit, integration, and e2e targets never run this test.
 
 ## Production Notes
 

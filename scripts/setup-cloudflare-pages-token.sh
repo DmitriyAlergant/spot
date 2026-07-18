@@ -5,6 +5,7 @@ api_base=${CLOUDFLARE_API_BASE_URL:-https://api.cloudflare.com/client/v4}
 prefix=spot-
 name=spot-cloudflare-pages-runtime
 bootstrap_token=
+bootstrap_token_kind=account
 account_id=
 zone_id=
 base_domain=
@@ -13,6 +14,7 @@ usage() {
     cat <<'USAGE'
 Usage: scripts/setup-cloudflare-pages-token.sh \
   --bootstrap-token TOKEN \
+  [--bootstrap-token-kind account|user] \
   --account-id ACCOUNT_ID \
   --zone-id ZONE_ID \
   --base-domain pages.example.com [--project-prefix spot-]
@@ -20,6 +22,10 @@ Usage: scripts/setup-cloudflare-pages-token.sh \
 Creates a lower-permission Cloudflare runtime API token and prints the
 SPOT_CLOUDFLARE_* environment variables for Spot. Requires curl and jq.
 The bootstrap token is used only for these API calls and is never stored.
+It must be able to create API tokens and manage Access identity providers.
+The script reuses an existing One-time PIN provider or creates one.
+Account-owned bootstrap tokens are the default; pass
+--bootstrap-token-kind user for a user-owned bootstrap token.
 USAGE
 }
 
@@ -31,6 +37,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --account-id)
             account_id=${2:-}
+            shift 2
+            ;;
+        --bootstrap-token-kind)
+            bootstrap_token_kind=${2:-}
             shift 2
             ;;
         --zone-id)
@@ -62,6 +72,19 @@ if [ -z "$bootstrap_token" ] || [ -z "$account_id" ] || [ -z "$zone_id" ] || [ -
     exit 2
 fi
 
+case "$bootstrap_token_kind" in
+    account)
+        token_api=/accounts/$account_id/tokens
+        ;;
+    user)
+        token_api=/user/tokens
+        ;;
+    *)
+        echo "--bootstrap-token-kind must be account or user" >&2
+        exit 2
+        ;;
+esac
+
 if ! command -v curl >/dev/null 2>&1; then
     echo "curl is required" >&2
     exit 1
@@ -86,7 +109,7 @@ cf() {
     fi
 }
 
-groups=$(cf GET /user/tokens/permission_groups)
+groups=$(cf GET "$token_api/permission_groups")
 
 permission_id() {
     printf '%s' "$groups" | jq -er --arg name "$1" '
@@ -107,7 +130,7 @@ first_permission_id() {
     return 1
 }
 
-pages_write=$(first_permission_id "Cloudflare Pages Write" "Pages Write" "Workers Pages Write" "Workers Scripts Write") || {
+pages_write=$(first_permission_id "Cloudflare Pages Write" "Pages Write" "Workers Pages Write") || {
     echo "could not find a Cloudflare Pages write permission group" >&2
     exit 1
 }
@@ -115,10 +138,20 @@ dns_write=$(first_permission_id "DNS Write" "Zone DNS Write") || {
     echo "could not find a DNS Write permission group" >&2
     exit 1
 }
-zone_read=$(first_permission_id "Zone Read") || {
-    echo "could not find a Zone Read permission group" >&2
+access_write=$(first_permission_id "Access: Apps and Policies Write" "Access Apps and Policies Write") || {
+    echo "could not find an Access Apps and Policies Write permission group" >&2
     exit 1
 }
+
+identity_providers=$(cf GET "/accounts/$account_id/access/identity_providers?per_page=100")
+access_idp_id=$(printf '%s' "$identity_providers" | jq -r '
+  [.result[] | select(.type == "onetimepin")][0].id // empty
+')
+if [ -z "$access_idp_id" ]; then
+    identity_provider_payload=$(jq -n '{name: "Spot email one-time PIN", type: "onetimepin", config: {}}')
+    identity_provider=$(cf POST "/accounts/$account_id/access/identity_providers" "$identity_provider_payload")
+    access_idp_id=$(printf '%s' "$identity_provider" | jq -er '.result.id')
+fi
 
 payload=$(jq -n \
     --arg name "$name" \
@@ -126,24 +159,24 @@ payload=$(jq -n \
     --arg zone "$zone_id" \
     --arg pages "$pages_write" \
     --arg dns "$dns_write" \
-    --arg zone_read "$zone_read" '
+    --arg access "$access_write" '
 {
   name: $name,
   policies: [
     {
       effect: "allow",
       resources: {("com.cloudflare.api.account." + $account): "*"},
-      permission_groups: [{id: $pages}]
+      permission_groups: [{id: $pages}, {id: $access}]
     },
     {
       effect: "allow",
       resources: {("com.cloudflare.api.account.zone." + $zone): "*"},
-      permission_groups: [{id: $dns}, {id: $zone_read}]
+      permission_groups: [{id: $dns}]
     }
   ]
 }')
 
-created=$(cf POST /user/tokens "$payload")
+created=$(cf POST "$token_api" "$payload")
 runtime_token=$(printf '%s' "$created" | jq -er '.result.value')
 
 cat <<EOF
@@ -152,4 +185,5 @@ SPOT_CLOUDFLARE_ACCOUNT_ID=$account_id
 SPOT_CLOUDFLARE_ZONE_ID=$zone_id
 SPOT_CLOUDFLARE_BASE_DOMAIN=$base_domain
 SPOT_CLOUDFLARE_PROJECT_PREFIX=$prefix
+SPOT_CLOUDFLARE_ACCESS_IDP_ID=$access_idp_id
 EOF

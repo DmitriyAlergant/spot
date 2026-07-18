@@ -457,6 +457,34 @@ func TestDeployPublishesLiveReloadEvent(t *testing.T) {
 	}
 }
 
+func TestDeployAlwaysRecordsContentHash(t *testing.T) {
+	auth := &recordingDeployAuth{}
+	srv := &Server{
+		sites:          newTestSiteStore(t),
+		deployAuth:     auth,
+		resolver:       NewStaticResolver("dev@spot.local", "Spot Dev", nil),
+		spotDomain:     "spot.localhost",
+		trustedProxies: testTrustedProxies(t),
+		deployLimit:    NewRateLimiter(1000, 1000),
+	}
+	files := map[string]string{"index.html": "<h1>hi</h1>", "assets/app.js": "console.log('ok')"}
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, deployRequest(t, "spot.localhost", "demo", files))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deploy = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(auth.events) != 1 || auth.events[0].ContentHash == "" {
+		t.Fatalf("audit events = %+v, want successful content hash", auth.events)
+	}
+	want := cloudflareContentHashForDeploy([]deployFile{
+		{path: "index.html", data: []byte(files["index.html"])},
+		{path: "assets/app.js", data: []byte(files["assets/app.js"])},
+	})
+	if auth.events[0].ContentHash != want {
+		t.Fatalf("audit content hash = %q, want %q", auth.events[0].ContentHash, want)
+	}
+}
+
 func TestDeployPreserveAccessKeepsExistingPolicy(t *testing.T) {
 	sites := newTestSiteStore(t)
 	srv := &Server{
@@ -595,7 +623,7 @@ func TestDeployStorageFailureIsAudited(t *testing.T) {
 	if len(auth.events) != 1 {
 		t.Fatalf("audit events = %d, want 1", len(auth.events))
 	}
-	if event := auth.events[0]; event.Status != "failed" || event.Action != "update" {
+	if event := auth.events[0]; event.Status != "failed" || event.Action != "deploy" {
 		t.Fatalf("audit event = %+v", event)
 	}
 }

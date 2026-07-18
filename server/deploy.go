@@ -252,19 +252,33 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not authorize deploy")
 		return
 	}
+	cancelAuthorization := func() {
+		canceler, ok := s.deployAuth.(deployAuthorizationCanceler)
+		if !ok {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := canceler.CancelDeployAuthorization(ctx, site, authz); err != nil {
+			log.Printf("deploy %s: cancel authorization: %v", site, err)
+		}
+	}
 	if preserveAccess {
 		files, err = s.preserveExistingAccessPolicy(r.Context(), site, files)
 		if err != nil {
+			cancelAuthorization()
 			log.Printf("deploy %s: preserve access: %v", site, err)
 			httpError(w, http.StatusInternalServerError, "could not preserve existing "+accessFileName)
 			return
 		}
 		if len(files) > maxDeployFiles {
+			cancelAuthorization()
 			httpError(w, http.StatusBadRequest,
 				fmt.Sprintf("too many files in the deploy (max %d)", maxDeployFiles))
 			return
 		}
 		if err := validateDeployPolicy(site, files); err != nil {
+			cancelAuthorization()
 			httpError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -293,7 +307,13 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	existing, err := s.sites.List(r.Context(), site)
 	if err != nil {
 		log.Printf("deploy %s: %v", site, err)
-		s.failDeployStorage(r, site, actor, authz.Action, files, policyOnFailure, "could not read current files")
+		cancelAuthorization()
+		if authz.Action == "create" && s.policies != nil {
+			s.policies.Invalidate(site)
+		}
+		// Listing is read-only, so record the operational failure without
+		// classifying the site's content as mutation-ambiguous.
+		s.recordDeployFailure(r, site, actor, "deploy", files, "could not read current files")
 		httpError(w, http.StatusInternalServerError, "could not read the site's current files")
 		return
 	}
@@ -433,12 +453,14 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.updatePolicyCacheFromDeploy(site, files)
 	s.recordDeployAudit(r, DeployAuditEvent{
-		Site:       site,
-		Actor:      actor,
-		Action:     authz.Action,
-		Status:     "success",
-		FileCount:  len(files),
-		TotalBytes: totalDeployBytes(files),
+		Site:              site,
+		Actor:             actor,
+		Action:            authz.Action,
+		Status:            "success",
+		FileCount:         len(files),
+		TotalBytes:        totalDeployBytes(files),
+		ContentHash:       cloudflareContentHashForDeploy(files),
+		ContentGeneration: authz.ContentGeneration,
 	})
 	if !metadataUpdated {
 		if err := updateMetadata(); err != nil {

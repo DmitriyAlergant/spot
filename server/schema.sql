@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS sites (
     title text NOT NULL DEFAULT '',
     description text NOT NULL DEFAULT '',
     tags text NOT NULL DEFAULT '[]',
+    content_dirty integer NOT NULL DEFAULT 0,
+    content_generation integer NOT NULL DEFAULT 0,
+    content_external_mutation integer NOT NULL DEFAULT 0,
+    content_external_mutation_started_at integer NOT NULL DEFAULT 0,
+    content_external_mutation_owner text NOT NULL DEFAULT '',
     created_at datetime NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
     updated_at datetime NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 );
@@ -37,6 +42,7 @@ CREATE TABLE IF NOT EXISTS site_deploy_audit (
     status text NOT NULL,
     file_count integer NOT NULL DEFAULT 0,
     total_bytes integer NOT NULL DEFAULT 0,
+    content_hash text NOT NULL DEFAULT '',
     message text NOT NULL DEFAULT '',
     created_at datetime NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 );
@@ -45,7 +51,19 @@ CREATE INDEX IF NOT EXISTS site_deploy_audit_site_created_idx
     ON site_deploy_audit (site, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS site_cloudflare_publications (
-    site text PRIMARY KEY,
+    site text PRIMARY KEY REFERENCES sites(name) ON DELETE RESTRICT,
+    account_id text NOT NULL DEFAULT '',
+    zone_id text NOT NULL DEFAULT '',
+    dns_record_id text NOT NULL DEFAULT '',
+    dns_managed integer NOT NULL DEFAULT 0,
+    project_managed integer NOT NULL DEFAULT 0,
+    cleanup_unknown integer NOT NULL DEFAULT 0,
+    access_mode text NOT NULL DEFAULT 'public',
+    access_emails text NOT NULL DEFAULT '[]',
+    requested_access_mode text NOT NULL DEFAULT '',
+    requested_access_emails text NOT NULL DEFAULT '[]',
+    access_app_id text NOT NULL DEFAULT '',
+    access_managed integer NOT NULL DEFAULT 0,
     project_name text NOT NULL,
     hostname text NOT NULL,
     deployment_id text NOT NULL DEFAULT '',
@@ -61,3 +79,16 @@ CREATE TABLE IF NOT EXISTS site_cloudflare_publications (
 
 CREATE INDEX IF NOT EXISTS site_cloudflare_publications_updated_idx
     ON site_cloudflare_publications (updated_at DESC);
+
+-- Older databases may already have the publications table without its foreign
+-- key. SQLite cannot add that constraint in place, so this trigger provides the
+-- same delete guard on upgrades. The foreign key remains the primary guard for
+-- fresh databases.
+CREATE TRIGGER IF NOT EXISTS site_cloudflare_publications_prevent_site_delete
+BEFORE DELETE ON sites
+WHEN EXISTS (
+    SELECT 1 FROM site_cloudflare_publications WHERE site = OLD.name
+)
+BEGIN
+    SELECT RAISE(ABORT, 'site has a Cloudflare publication');
+END;

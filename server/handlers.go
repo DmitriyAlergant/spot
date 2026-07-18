@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -23,29 +24,33 @@ var idRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 var roomEventRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
 
 type Server struct {
-	store          *DocStore
-	resolver       IdentityResolver
-	forwardAuth    *ForwardAuth
-	policies       *PolicyStore
-	hub            *Hub
-	roomHub        *RoomHub
-	files          FileStorage
-	sites          SiteStorage
-	deployAuth     DeployAuthorizer
-	siteAdmin      SiteAdmin
-	siteManager    SiteManager
-	cloudflare     *CloudflarePublisher
-	cloudflarePubs *CloudflarePublicationStore
-	ai             *AIProxy
-	aiAccess       string
-	slack          *SlackProxy
-	slackAccess    string
-	maxUpload      int64
-	spotDomain     string
-	trustedProxies *TrustedProxies
-	serveStatic    bool
-	siteLocksMu    sync.Mutex
-	siteLocks      map[string]*sync.Mutex
+	store             *DocStore
+	resolver          IdentityResolver
+	forwardAuth       *ForwardAuth
+	policies          *PolicyStore
+	hub               *Hub
+	roomHub           *RoomHub
+	files             FileStorage
+	sites             SiteStorage
+	deployAuth        DeployAuthorizer
+	siteAdmin         SiteAdmin
+	siteManager       SiteManager
+	cloudflare        *CloudflarePublisher
+	cloudflarePubs    *CloudflarePublicationStore
+	ai                *AIProxy
+	aiAccess          string
+	slack             *SlackProxy
+	slackAccess       string
+	maxUpload         int64
+	spotDomain        string
+	trustedProxies    *TrustedProxies
+	serveStatic       bool
+	siteLocksMu       sync.Mutex
+	siteLocks         map[string]*sync.Mutex
+	cloudflareLocksMu sync.Mutex
+	cloudflareLocks   map[string]*sync.Mutex
+	cloudflareJobsMu  sync.Mutex
+	cloudflareJobs    map[string]struct{}
 
 	// bgTasks tracks detached post-deploy work (AI auto-tagging) so shutdown
 	// and tests can wait for it to drain.
@@ -182,6 +187,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sites/{name}/preview", s.handleSitePreview)
 	mux.HandleFunc("GET /api/sites/{name}/cloudflare", s.sameOriginOnly(s.limited(s.dbLimit, s.handleCloudflareStatus)))
 	mux.HandleFunc("POST /api/sites/{name}/cloudflare/publish", s.sameOriginOnly(s.limited(s.deployLimit, s.handleCloudflarePublish)))
+	mux.HandleFunc("POST /api/sites/{name}/cloudflare/access/resolve", s.sameOriginOnly(s.limited(s.deployLimit, s.handleCloudflareResolveAccess)))
+	mux.HandleFunc("POST /api/sites/{name}/cloudflare/project/resolve", s.sameOriginOnly(s.limited(s.deployLimit, s.handleCloudflareResolveProject)))
+	mux.HandleFunc("POST /api/sites/{name}/cloudflare/legacy/resolve", s.sameOriginOnly(s.limited(s.deployLimit, s.handleCloudflareResolveLegacy)))
 	mux.HandleFunc("DELETE /api/sites/{name}/cloudflare", s.sameOriginOnly(s.limited(s.deployLimit, s.handleCloudflareUnpublish)))
 	mux.HandleFunc("DELETE /api/sites/{name}", s.sameOriginOnly(s.limited(s.deployLimit, s.handleDeleteSite)))
 	mux.HandleFunc("GET /api/files", s.sameOriginOnly(s.limited(s.fileLimit, s.handleFileList)))
@@ -222,6 +230,56 @@ func (s *Server) siteMutationLock(site string) *sync.Mutex {
 		s.siteLocks[site] = lock
 	}
 	return lock
+}
+
+// cloudflareMutationLock serializes publish and unpublish operations for a
+// site without holding the site storage lock across Cloudflare network calls.
+// Publish still uses siteMutationLock while taking its snapshot and creating
+// the durable reservation that prevents a concurrent site delete.
+func (s *Server) cloudflareMutationLock(site string) *sync.Mutex {
+	s.cloudflareLocksMu.Lock()
+	defer s.cloudflareLocksMu.Unlock()
+	if s.cloudflareLocks == nil {
+		s.cloudflareLocks = make(map[string]*sync.Mutex)
+	}
+	lock := s.cloudflareLocks[site]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.cloudflareLocks[site] = lock
+	}
+	return lock
+}
+
+// beginCloudflareJob marks a publication operation as active before it starts
+// making provider calls. The marker is intentionally process-local: durable
+// publication phases remain resumable after a restart, while a live process
+// can distinguish an active operation from one interrupted by that restart.
+func (s *Server) beginCloudflareJob(site string) bool {
+	s.cloudflareJobsMu.Lock()
+	defer s.cloudflareJobsMu.Unlock()
+	if s.cloudflareJobs == nil {
+		s.cloudflareJobs = make(map[string]struct{})
+	}
+	if _, active := s.cloudflareJobs[site]; active {
+		return false
+	}
+	s.cloudflareJobs[site] = struct{}{}
+	s.bgTasks.Add(1)
+	return true
+}
+
+func (s *Server) endCloudflareJob(site string) {
+	s.cloudflareJobsMu.Lock()
+	delete(s.cloudflareJobs, site)
+	s.cloudflareJobsMu.Unlock()
+	s.bgTasks.Done()
+}
+
+func (s *Server) cloudflareJobActive(site string) bool {
+	s.cloudflareJobsMu.Lock()
+	defer s.cloudflareJobsMu.Unlock()
+	_, active := s.cloudflareJobs[site]
+	return active
 }
 
 // sameOriginOnly rejects browser-originated cross-site API calls. Spot
@@ -394,7 +452,12 @@ func (s *Server) recordDeployAudit(r *http.Request, event DeployAuditEvent) {
 	if s.deployAuth == nil {
 		return
 	}
-	if err := s.deployAuth.RecordDeploy(r.Context(), event); err != nil {
+	// Storage mutations may already have completed when the client disconnects.
+	// Keep the short audit write independent of request cancellation so current
+	// content metadata cannot remain stale after a partial or successful deploy.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.deployAuth.RecordDeploy(ctx, event); err != nil {
 		log.Printf("deploy audit %s: %v", event.Site, err)
 	}
 }
