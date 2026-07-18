@@ -583,20 +583,45 @@
       transform: rotate(3deg);
     }
     .release-date { color: #b9b2cc; }
-    .release h3 { margin: 11px 0 15px; color: var(--paper); font-size: 20px; }
-    .release ul { display: grid; gap: 11px; margin: 0; padding-left: 20px; color: #e6e1ef; font-size: 12.5px; line-height: 1.7; }
+    .release-version {
+      display: inline-block;
+      margin-right: 8px;
+      border-radius: 999px;
+      background: var(--field);
+      padding: 4px 8px;
+      color: #fff;
+    }
+    .release h3 { margin: 15px 0 10px; color: var(--paper); font-size: 23px; }
+    .release-summary { margin: 0 0 20px; color: #cfc8dc; font-size: 14px; line-height: 1.75; }
+    .release ul { display: grid; gap: 12px; margin: 0; padding-left: 20px; color: #e6e1ef; font-size: 14px; line-height: 1.75; }
+    .release li strong { color: #fff; }
     .release a { color: #fff; text-underline-offset: 4px; }
+    .release-source {
+      display: inline-flex;
+      margin-top: 24px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .release-history { margin-top: 26px; }
     .older-release {
-      display: flex;
-      gap: 14px;
-      margin-top: 18px;
+      display: grid;
+      grid-template-columns: 105px minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: start;
       border-bottom: 2px dashed #b9b3c6;
-      padding: 0 4px 14px;
+      padding: 18px 4px;
       color: var(--muted);
-      font-size: 11.5px;
+      font-size: 13.5px;
       line-height: 1.7;
     }
-    .older-release time { flex: 0 0 92px; color: var(--ink); font-weight: 700; }
+    .older-release:first-child { border-top: 2px dashed #b9b3c6; }
+    .older-release-meta { display: grid; gap: 4px; color: var(--ink); font-size: 11px; font-weight: 700; }
+    .older-release-meta span { color: var(--field); }
+    .older-release h3 { margin: 0 0 5px; color: var(--ink); font-size: 15px; }
+    .older-release p { margin: 0; }
+    .older-release a { color: var(--field); font-size: 11px; font-weight: 700; text-underline-offset: 3px; white-space: nowrap; }
 
     .bottom-cta {
       border-top: var(--line);
@@ -671,8 +696,10 @@
       .agent-command, .agent-link { margin-left: 0; }
       .agent-command { flex-direction: column; }
       .agent-command .copy { width: 100%; }
-      .older-release { flex-direction: column; gap: 4px; }
-      .older-release time { flex-basis: auto; }
+      .release { padding: 25px 22px; }
+      .older-release { grid-template-columns: 1fr; gap: 8px; }
+      .older-release-meta { display: flex; gap: 10px; }
+      .older-release a { margin-top: 2px; }
       .bottom-cta-inner { align-items: flex-start; flex-direction: column; }
       .cta-button { width: 100%; text-align: center; }
     }
@@ -837,16 +864,34 @@
             </div>
 
             <article class="release">
-              <p class="mini-label release-date"><time datetime="2026-07-18">July 18, 2026</time> · Internet publishing</p>
-              <h3>Share beyond the mesh.</h3>
+              <p class="mini-label release-date"><span class="release-version">v0.4.0</span><time datetime="2026-07-18">July 18, 2026</time></p>
+              <h3>More ways to share. Less to babysit.</h3>
+              <p class="release-summary">Spot grew from a quick private publisher into a better home for work that needs to travel, involve a team, or tell a richer story.</p>
               <ul>
-                <li>Publish a managed internet version from <a href="/spots">My spots</a>.</li>
-                <li>Choose an open link or restrict visitors with one-time email PINs.</li>
-                <li>See mesh and internet audiences as separate, plain-language status chips.</li>
+                <li><strong>Put a spot on the internet</strong> from <a href="/spots">My spots</a>, either open to everyone or protected by an email sign-in.</li>
+                <li><strong>Share the controls with teammates</strong> while the original owner keeps a permanent recovery path.</li>
+                <li><strong>Turn updates into visual reports</strong> with Spot Show—useful for plans, diagrams, screenshots, diffs, and results.</li>
+                <li><strong>Find your way around faster</strong> with saved-spot filters, activity stats, better gallery previews, and this field guide.</li>
               </ul>
+              <a class="release-source" href="https://github.com/melonamin/spot/releases/tag/v0.4.0">Read the full v0.4.0 release →</a>
             </article>
-            <div class="older-release"><time datetime="2026-07-13">July 13, 2026</time><span>Saved spots filter added to the gallery, so frequently used work is one tap away.</span></div>
-            <div class="older-release"><time datetime="2026-07-02">July 2, 2026</time><span>Spot Show gained a report-style template for polished, shareable visual summaries.</span></div>
+            <div class="release-history" aria-label="Earlier releases">
+              <article class="older-release">
+                <div class="older-release-meta"><span>v0.3.0</span><time datetime="2026-06-23">June 23, 2026</time></div>
+                <div><h3>The gallery learned some manners.</h3><p>Spots gained better names, descriptions, tags, previews, and search—making shared work much easier to recognize and revisit.</p></div>
+                <a href="https://github.com/melonamin/spot/releases/tag/v0.3.0">Full release →</a>
+              </article>
+              <article class="older-release">
+                <div class="older-release-meta"><span>v0.2.0</span><time datetime="2026-06-15">June 15, 2026</time></div>
+                <div><h3>Small sites could do more.</h3><p>Pages could stream AI conversations, manage files, and work with richer saved data—with sturdier behavior when connections wobble.</p></div>
+                <a href="https://github.com/melonamin/spot/releases/tag/v0.2.0">Full release →</a>
+              </article>
+              <article class="older-release">
+                <div class="older-release-meta"><span>v0.1.0</span><time datetime="2026-06-15">June 15, 2026</time></div>
+                <div><h3>Spot arrived.</h3><p>The first public version made it possible to drop in a folder, get a private link, and add storage, realtime updates, or AI when a simple page needed more.</p></div>
+                <a href="https://github.com/melonamin/spot/releases/tag/v0.1.0">Full release →</a>
+              </article>
+            </div>
           </section>
         </div>
       </div>
