@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	ErrDeployForbidden = errors.New("deploy forbidden")
-	ErrSiteNotFound    = errors.New("site not found")
+	ErrDeployForbidden                  = errors.New("deploy forbidden")
+	ErrSiteNotFound                     = errors.New("site not found")
+	ErrExternalContentMutationActive    = errors.New("external content mutation already active")
+	ErrExternalContentMutationLeaseLost = errors.New("external content mutation lease lost")
 )
 
 type DeployAuthorizer interface {
@@ -21,17 +23,21 @@ type DeployAuthorizer interface {
 }
 
 type DeployAuthorization struct {
-	Action string
+	Action            string
+	ContentGeneration int64
+	ContentWasDirty   bool
 }
 
 type DeployAuditEvent struct {
-	Site       string
-	Actor      Identity
-	Action     string
-	Status     string
-	Message    string
-	FileCount  int
-	TotalBytes int64
+	Site              string
+	Actor             Identity
+	Action            string
+	Status            string
+	Message           string
+	FileCount         int
+	TotalBytes        int64
+	ContentHash       string
+	ContentGeneration int64
 }
 
 type SiteRegistry struct {
@@ -45,6 +51,10 @@ type siteMetadataUpdater interface {
 
 type siteMetadataReader interface {
 	SiteMetadata(ctx context.Context, site string) (SiteMetadata, error)
+}
+
+type deployAuthorizationCanceler interface {
+	CancelDeployAuthorization(ctx context.Context, site string, authz DeployAuthorization) error
 }
 
 type SiteRecord struct {
@@ -78,16 +88,17 @@ func (r *SiteRegistry) AuthorizeDeploy(ctx context.Context, site string, actor I
 
 	record, err := r.readSiteForUpdate(ctx, tx, site)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := tx.ExecContext(ctx,
+		var generation int64
+		if err := tx.QueryRowContext(ctx,
 			insertSiteSQL,
 			site, strings.ToLower(actor.Email), actor.PeerIP, actor.Name,
-		); err != nil {
+		).Scan(&generation); err != nil {
 			return DeployAuthorization{}, fmt.Errorf("claim site %s: %w", site, err)
 		}
 		if err := tx.Commit(); err != nil {
 			return DeployAuthorization{}, fmt.Errorf("commit site claim: %w", err)
 		}
-		return DeployAuthorization{Action: "create"}, nil
+		return DeployAuthorization{Action: "create", ContentGeneration: generation}, nil
 	}
 	if err != nil {
 		return DeployAuthorization{}, err
@@ -96,15 +107,33 @@ func (r *SiteRegistry) AuthorizeDeploy(ctx context.Context, site string, actor I
 	if !record.OwnedBy(actor) && !allowsAdmin(r.admins, actor) {
 		return DeployAuthorization{}, ErrDeployForbidden
 	}
-	if _, err := tx.ExecContext(ctx,
-		touchSiteSQL, site,
-	); err != nil {
+	var wasDirty bool
+	if err := tx.QueryRowContext(ctx, `SELECT content_dirty FROM sites WHERE name = ?`, site).Scan(&wasDirty); err != nil {
+		return DeployAuthorization{}, fmt.Errorf("read site content state %s: %w", site, err)
+	}
+	var generation int64
+	if err := tx.QueryRowContext(ctx, touchSiteSQL, site).Scan(&generation); err != nil {
 		return DeployAuthorization{}, fmt.Errorf("touch site %s: %w", site, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return DeployAuthorization{}, fmt.Errorf("commit deploy auth: %w", err)
 	}
-	return DeployAuthorization{Action: "update"}, nil
+	return DeployAuthorization{Action: "update", ContentGeneration: generation, ContentWasDirty: wasDirty}, nil
+}
+
+func (r *SiteRegistry) CancelDeployAuthorization(ctx context.Context, site string, authz DeployAuthorization) error {
+	if authz.Action == "create" {
+		_, err := r.db.ExecContext(ctx, `DELETE FROM sites
+			WHERE name = ? AND content_generation = ?`, site, authz.ContentGeneration)
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE sites SET content_dirty = ?
+		WHERE name = ? AND content_generation = ? AND content_external_mutation = 0`,
+		authz.ContentWasDirty, site, authz.ContentGeneration)
+	if err != nil {
+		return fmt.Errorf("cancel deploy authorization for %s: %w", site, err)
+	}
+	return nil
 }
 
 // DeleteClaim removes a site's registry row. handleDeploy calls it when a
@@ -129,7 +158,12 @@ func (r *SiteRegistry) RecordDeploy(ctx context.Context, event DeployAuditEvent)
 	if err != nil {
 		return fmt.Errorf("encode deploy audit groups: %w", err)
 	}
-	_, err = r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin deploy audit for %s: %w", event.Site, err)
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx,
 		insertDeployAuditSQL,
 		event.Site,
 		strings.ToLower(event.Actor.Email),
@@ -140,10 +174,21 @@ func (r *SiteRegistry) RecordDeploy(ctx context.Context, event DeployAuditEvent)
 		event.Status,
 		event.FileCount,
 		event.TotalBytes,
+		event.ContentHash,
 		event.Message,
 	)
 	if err != nil {
 		return fmt.Errorf("record deploy audit for %s: %w", event.Site, err)
+	}
+	if event.Status == "success" && (event.Action == "create" || event.Action == "update") && event.ContentGeneration > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE sites SET content_dirty = 0
+			WHERE name = ? AND content_generation = ? AND content_external_mutation = 0`,
+			event.Site, event.ContentGeneration); err != nil {
+			return fmt.Errorf("mark deployed content current for %s: %w", event.Site, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit deploy audit for %s: %w", event.Site, err)
 	}
 	return nil
 }
@@ -152,8 +197,10 @@ func (r *SiteRegistry) RecordDeploy(ctx context.Context, event DeployAuditEvent)
 // deploy, for the platform's "my spots" page.
 type OwnedSite struct {
 	SiteRecord
-	FileCount  int
-	TotalBytes int64
+	FileCount            int
+	TotalBytes           int64
+	ContentHash          string
+	ContentHashUncertain bool
 }
 
 // SitesOwnedBy returns the sites the actor owns, most recently updated
@@ -174,7 +221,7 @@ func (r *SiteRegistry) SitesOwnedBy(ctx context.Context, actor Identity) ([]Owne
 		var rawTags string
 		if err := rows.Scan(&site.Name, &site.OwnerEmail, &site.OwnerPeerIP, &site.OwnerName,
 			&site.Title, &site.Description, &rawTags, &site.CreatedAt, &site.UpdatedAt,
-			&site.FileCount, &site.TotalBytes); err != nil {
+			&site.FileCount, &site.TotalBytes, &site.ContentHash, &site.ContentHashUncertain); err != nil {
 			return nil, fmt.Errorf("scan owned site: %w", err)
 		}
 		site.Tags = decodeSiteTags(rawTags)
@@ -222,6 +269,88 @@ func (r *SiteRegistry) CanManageSite(ctx context.Context, site string, actor Ide
 		return false, fmt.Errorf("read site %s: %w", site, err)
 	}
 	return record.OwnedBy(actor) || allowsAdmin(r.admins, actor), nil
+}
+
+// MarkSiteContentDirty durably records that storage may change before the
+// first mutation starts. A later successful deploy audit clears the marker.
+func (r *SiteRegistry) MarkSiteContentDirty(ctx context.Context, site string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE sites
+		SET content_dirty = 1, content_generation = content_generation + 1 WHERE name = ?`, site)
+	if err != nil {
+		return fmt.Errorf("mark site content dirty for %s: %w", site, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count dirty site update for %s: %w", site, err)
+	}
+	if updated != 1 {
+		return ErrSiteNotFound
+	}
+	return nil
+}
+
+func (r *SiteRegistry) BeginExternalContentMutation(ctx context.Context, site string) (string, error) {
+	var owner string
+	err := r.db.QueryRowContext(ctx, `UPDATE sites SET
+		content_dirty = 1,
+		content_generation = content_generation + 1,
+		content_external_mutation = 1,
+		content_external_mutation_started_at = unixepoch(),
+		content_external_mutation_owner = lower(hex(randomblob(16)))
+		WHERE name = ? AND content_external_mutation = 0
+		RETURNING content_external_mutation_owner`, site).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		var exists bool
+		if checkErr := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sites WHERE name = ?)`, site).Scan(&exists); checkErr != nil {
+			return "", checkErr
+		}
+		if !exists {
+			return "", ErrSiteNotFound
+		}
+		return "", ErrExternalContentMutationActive
+	}
+	if err != nil {
+		return "", fmt.Errorf("begin external content mutation for %s: %w", site, err)
+	}
+	return owner, nil
+}
+
+func (r *SiteRegistry) EndExternalContentMutation(ctx context.Context, site, owner string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE sites SET
+		content_dirty = 1,
+		content_generation = content_generation + 1,
+		content_external_mutation = 0,
+		content_external_mutation_started_at = 0,
+		content_external_mutation_owner = ''
+		WHERE name = ? AND content_external_mutation = 1
+		  AND content_external_mutation_owner = ?`, site, owner)
+	if err != nil {
+		return fmt.Errorf("end external content mutation for %s: %w", site, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count external content mutation update for %s: %w", site, err)
+	}
+	if updated != 1 {
+		return ErrExternalContentMutationLeaseLost
+	}
+	return nil
+}
+
+func (r *SiteRegistry) RecoverStaleExternalContentMutation(ctx context.Context, site string, staleBefore time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE sites SET
+		content_dirty = 1,
+		content_generation = content_generation + 1,
+		content_external_mutation = 0,
+		content_external_mutation_started_at = 0,
+		content_external_mutation_owner = ''
+		WHERE name = ? AND content_external_mutation <> 0
+		  AND content_external_mutation_started_at > 0
+		  AND content_external_mutation_started_at < ?`, site, staleBefore.Unix())
+	if err != nil {
+		return fmt.Errorf("recover stale external content mutation for %s: %w", site, err)
+	}
+	return nil
 }
 
 // DeleteSite removes a site's registry row after purge succeeds. A
@@ -293,10 +422,17 @@ func scanSiteRecord(row siteRecordScanner, record *SiteRecord) error {
 }
 
 const (
-	insertSiteSQL = `INSERT INTO sites (name, owner_email, owner_peer_ip, owner_name)
-		VALUES (?, ?, ?, ?)`
+	insertSiteSQL = `INSERT INTO sites
+		(name, owner_email, owner_peer_ip, owner_name, content_dirty, content_generation)
+		VALUES (?, ?, ?, ?, 1, 1)
+		RETURNING content_generation`
 
-	touchSiteSQL = `UPDATE sites SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE name = ?`
+	touchSiteSQL = `UPDATE sites SET
+		updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
+		content_dirty = 1,
+		content_generation = content_generation + 1
+		WHERE name = ?
+		RETURNING content_generation`
 
 	readSiteSQL = `SELECT name, owner_email, owner_peer_ip, owner_name, title, description, tags, created_at, updated_at
 		FROM sites
@@ -304,8 +440,8 @@ const (
 
 	insertDeployAuditSQL = `INSERT INTO site_deploy_audit
 		(site, actor_email, actor_peer_ip, actor_name, actor_groups,
-		 action, status, file_count, total_bytes, message)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 action, status, file_count, total_bytes, content_hash, message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	sitesOwnedBySQL = `SELECT s.name, s.owner_email, s.owner_peer_ip, s.owner_name,
 			s.title, s.description, s.tags, s.created_at, s.updated_at,
@@ -314,7 +450,14 @@ const (
 				ORDER BY created_at DESC, id DESC LIMIT 1), 0),
 			COALESCE((SELECT total_bytes FROM site_deploy_audit
 				WHERE site = s.name AND status = 'success'
-				ORDER BY created_at DESC, id DESC LIMIT 1), 0)
+				ORDER BY created_at DESC, id DESC LIMIT 1), 0),
+			COALESCE((SELECT content_hash FROM site_deploy_audit
+				WHERE site = s.name AND status = 'success'
+				ORDER BY created_at DESC, id DESC LIMIT 1), ''),
+			(s.content_dirty <> 0 OR COALESCE((SELECT status = 'failed' FROM site_deploy_audit
+				WHERE site = s.name AND action IN ('create', 'update', 'delete')
+				  AND status IN ('success', 'failed')
+				ORDER BY created_at DESC, id DESC LIMIT 1), 0))
 		FROM sites s
 		WHERE (s.owner_email <> '' AND s.owner_email = ?)
 		   OR (s.owner_email = '' AND s.owner_peer_ip <> '' AND s.owner_peer_ip = ?)

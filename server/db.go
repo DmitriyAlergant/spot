@@ -65,6 +65,83 @@ func applyAdditiveMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE sites ADD COLUMN tags text NOT NULL DEFAULT '[]'`); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, db, "sites", "content_dirty",
+		`ALTER TABLE sites ADD COLUMN content_dirty integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "content_generation",
+		`ALTER TABLE sites ADD COLUMN content_generation integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "content_external_mutation",
+		`ALTER TABLE sites ADD COLUMN content_external_mutation integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "content_external_mutation_started_at",
+		`ALTER TABLE sites ADD COLUMN content_external_mutation_started_at integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "content_external_mutation_owner",
+		`ALTER TABLE sites ADD COLUMN content_external_mutation_owner text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_deploy_audit", "content_hash",
+		`ALTER TABLE site_deploy_audit ADD COLUMN content_hash text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "account_id",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN account_id text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "zone_id",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN zone_id text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "dns_record_id",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN dns_record_id text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureCloudflareCleanupUnknownColumn(ctx, db); err != nil {
+		return err
+	}
+	if err := ensureCloudflareDNSManagedColumn(ctx, db); err != nil {
+		return err
+	}
+	if err := ensureCloudflareProjectManagedColumn(ctx, db); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "access_mode",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN access_mode text NOT NULL DEFAULT 'public'`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "access_emails",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN access_emails text NOT NULL DEFAULT '[]'`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "requested_access_mode",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN requested_access_mode text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "requested_access_emails",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN requested_access_emails text NOT NULL DEFAULT '[]'`); err != nil {
+		return err
+	}
+	// Older interrupted Access creates did not retain the requested policy.
+	// Preserve the security-sensitive visibility choice even though the original
+	// allowlist must be entered again before the publication can resume.
+	if _, err := db.ExecContext(ctx, `UPDATE site_cloudflare_publications
+		SET requested_access_mode = 'restricted'
+		WHERE status = 'restricting' AND requested_access_mode = ''`); err != nil {
+		return fmt.Errorf("backfill requested Cloudflare Access mode: %w", err)
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "access_app_id",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN access_app_id text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "access_managed",
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN access_managed integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
 	// documents_scope_collection_cursor_idx (scope, collection, created_at DESC,
 	// id DESC) serves every lookup the older 3-column documents_scope_collection_idx
 	// did, so the latter is redundant write amplification. Drop it on existing
@@ -76,27 +153,158 @@ func applyAdditiveMigrations(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// ensureColumn adds a column when it is missing. SQLite has no
-// "ADD COLUMN IF NOT EXISTS", so the presence check is done against
-// pragma_table_info first; running the ALTER unconditionally would fail on
-// databases that already have the column.
-func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) error {
+// ensureCloudflareCleanupUnknownColumn distinguishes old published resources
+// whose original account/zone were never stored from new reservations that
+// definitely own nothing yet. Unknown cleanup stays blocked for manual repair.
+func ensureCloudflareCleanupUnknownColumn(ctx context.Context, db *sql.DB) error {
+	exists, err := hasColumn(ctx, db, "site_cloudflare_publications", "cleanup_unknown")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin site_cloudflare_publications.cleanup_unknown migration: %w", err)
+	}
+	defer tx.Rollback()
+	exists, err = hasColumn(ctx, tx, "site_cloudflare_publications", "cleanup_unknown")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN cleanup_unknown integer NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add site_cloudflare_publications.cleanup_unknown column: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE site_cloudflare_publications SET cleanup_unknown = 1
+		WHERE status <> 'reserving' AND (account_id = '' OR zone_id = '')`); err != nil {
+		return fmt.Errorf("mark locationless legacy Cloudflare cleanup unknown: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit site_cloudflare_publications.cleanup_unknown migration: %w", err)
+	}
+	return nil
+}
+
+// ensureCloudflareDNSManagedColumn preserves cleanup only when the row already
+// has its original zone. Locationless legacy rows fail closed rather than
+// applying current configuration to resources created elsewhere.
+func ensureCloudflareDNSManagedColumn(ctx context.Context, db *sql.DB) error {
+	exists, err := hasColumn(ctx, db, "site_cloudflare_publications", "dns_managed")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin site_cloudflare_publications.dns_managed migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Check again inside the transaction so the schema change and legacy-row
+	// backfill are one restart-safe unit. SQLite rolls the ALTER TABLE back if
+	// the UPDATE or commit fails.
+	exists, err = hasColumn(ctx, tx, "site_cloudflare_publications", "dns_managed")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN dns_managed integer NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add site_cloudflare_publications.dns_managed column: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE site_cloudflare_publications SET dns_managed = 1 WHERE zone_id <> ''`); err != nil {
+		return fmt.Errorf("preserve legacy Cloudflare DNS cleanup ownership: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit site_cloudflare_publications.dns_managed migration: %w", err)
+	}
+	return nil
+}
+
+// ensureCloudflareProjectManagedColumn preserves cleanup only for rows that
+// already store their original account. Locationless legacy rows fail closed;
+// new rows become owned only after a definite CreateProject success is stored.
+func ensureCloudflareProjectManagedColumn(ctx context.Context, db *sql.DB) error {
+	exists, err := hasColumn(ctx, db, "site_cloudflare_publications", "project_managed")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin site_cloudflare_publications.project_managed migration: %w", err)
+	}
+	defer tx.Rollback()
+	exists, err = hasColumn(ctx, tx, "site_cloudflare_publications", "project_managed")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE site_cloudflare_publications ADD COLUMN project_managed integer NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add site_cloudflare_publications.project_managed column: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE site_cloudflare_publications SET project_managed = 1
+		 WHERE status <> 'reserving' AND account_id <> ''`); err != nil {
+		return fmt.Errorf("preserve legacy Cloudflare project cleanup ownership: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit site_cloudflare_publications.project_managed migration: %w", err)
+	}
+	return nil
+}
+
+type sqlQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func hasColumn(ctx context.Context, db sqlQueryer, table, column string) (bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
 	if err != nil {
-		return fmt.Errorf("inspect %s columns: %w", table, err)
+		return false, fmt.Errorf("inspect %s columns: %w", table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return fmt.Errorf("scan %s column: %w", table, err)
+			return false, fmt.Errorf("scan %s column: %w", table, err)
 		}
 		if name == column {
-			return nil
+			return true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("inspect %s columns: %w", table, err)
+		return false, fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	return false, nil
+}
+
+// ensureColumn adds a column when it is missing. SQLite has no
+// "ADD COLUMN IF NOT EXISTS", so the presence check is done against
+// pragma_table_info first; running the ALTER unconditionally would fail on
+// databases that already have the column.
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) error {
+	exists, err := hasColumn(ctx, db, table, column)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
 	}
 	if _, err := db.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("add %s.%s column: %w", table, column, err)

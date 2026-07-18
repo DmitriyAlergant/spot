@@ -33,6 +33,13 @@ test:
 test-integration:
     cd server && go test -tags integration ./...
 
+# Opt-in destructive Cloudflare contract test. Requires dedicated
+# SPOT_CLOUDFLARE_* credentials and always removes its project/domain/DNS row.
+# Set SPOT_CLOUDFLARE_LIVE_TEST_EMAIL to also exercise Access restriction and
+# the return-to-public transition.
+test-cloudflare-live:
+    cd server && SPOT_CLOUDFLARE_LIVE_TEST=1 go test -count=1 -tags=integration,cloudflarelive -run '^TestCloudflareLivePublishRoundTrip$' .
+
 # Sync the embedded SDK copy under server/static_assets/sdk.
 generate:
     cd server && go generate ./...
