@@ -204,6 +204,8 @@ Then reply briefly with what changed. The user's open tab should refresh.
   credentials, private tokens, or sensitive data in `show.json`, generated HTML,
   or static assets.
 - Restrict a site with `_access.json` when needed.
+- Delegate deployment and management with `_access.json` `maintainers`; this is
+  separate from visitor access and should reflect the user's intended team.
 - Use `{ "download": false }` in `_access.json` if the site should be viewable
   but not source-downloadable.
 
@@ -305,7 +307,8 @@ Spot sites.
 ### AI
 
 The OpenAI-compatible gateway key lives on the server. By default, AI is limited
-to the site owner or platform admins. Authorized visitors can use it only when
+to site managers: the owner, platform admins, and `_access.json` maintainers who
+also pass normal visitor access. Other authorized visitors can use it only when
 the deployment sets `SPOT_AI_ACCESS=visitors` or the site opts in with
 `"ai":"visitors"` in `_access.json`.
 
@@ -330,8 +333,9 @@ deployment gateway.
 
 ### Slack notifications
 
-Slack uses the server-side bot token. By default it is limited to the site owner
-or platform admins. Authorized visitors can use it only when
+Slack uses the server-side bot token. By default it is limited to site managers:
+the owner, platform admins, and `_access.json` maintainers who also pass normal
+visitor access. Other authorized visitors can use it only when
 `SPOT_SLACK_ACCESS=visitors` is set or the site opts in with
 `"slack":"visitors"` in `_access.json`.
 
@@ -371,9 +375,17 @@ These platform APIs work from the Spot root, not from site subdomains:
 
 ```js
 const mine = await spot.sites.mine();
+const manageable = await spot.sites.manageable();
 const publicSites = await spot.sites.public();
 await spot.sites.delete('old-demo');
 ```
+
+`mine()` is the ownership-only compatibility view. Use `manageable()` for the
+sites the current identity may operate; entries include `management_role`,
+owner attribution, and lifecycle state. An owner/admin may see a `deleted`
+recovery tombstone and can redeploy the same name or call `delete()` again to
+release it. A maintainer delete purges the site but deliberately leaves that
+owner-only recovery claim, so delegated deletion cannot transfer ownership.
 
 ### Errors and rate limits
 
@@ -391,19 +403,28 @@ interpolate document data into `innerHTML`.
 
 ### Access control
 
-Sites are open to everyone by default. To restrict a site, deploy `_access.json`
-at its root:
+Sites are open to everyone by default. Use `_access.json` at the deployed root
+to configure visitor access and delegated management:
 
 ```json
-{ "allow": ["alice@corp.com", "team-payments"] }
+{
+  "allow": ["alice@corp.com", "team-payments"],
+  "maintainers": ["bob@corp.com", "team-platform"]
+}
 ```
 
-Entries with `@` match visitor email; other entries match mesh group names. The
-file applies to the whole site including its database API. It is an allowlist,
-not a secret. Add `"ai":"visitors"` or `"slack":"visitors"` only when permitted
-visitors should spend the deployment's server-side AI or Slack credentials. Add
-`"download":false` to disable source ZIP downloads while keeping normal page
-access unchanged.
+Entries with `@` match identity email; other entries match mesh group names.
+Matching is case-insensitive. `allow` applies to the whole site, including its
+database API. `maintainers` independently grants deploy, delete, Cloudflare,
+and owner-mode AI/Slack management for an active site; it does not grant
+visitor access. The file is an allowlist, not a secret. Add `"ai":"visitors"`
+or `"slack":"visitors"` only when permitted visitors should spend the
+deployment's server-side credentials. Add `"download":false` to disable source
+ZIP downloads while keeping normal page access unchanged.
 
-The first deploy of a site claims it. Later deploys, including changes to
-`_access.json`, require the same owner identity or a platform admin.
+The first deploy of a site claims an immutable owner. Later deploys, including
+changes to `_access.json`, require that owner, a platform admin, or a maintainer
+from the currently stored policy. A deploy cannot grant its own actor access
+with its incoming policy. Maintainers may add, replace, or remove maintainers,
+including themselves. Keep the owner/admin recovery path in mind before
+removing the last team maintainer.

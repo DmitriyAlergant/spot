@@ -116,6 +116,9 @@ func (s *Server) handleSitePreview(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid site name")
 		return
 	}
+	if !s.authorizeSiteLifecycle(w, r, site) {
+		return
+	}
 	if restricted, _, _ := s.policySummaryForSite(r.Context(), site); restricted {
 		http.NotFound(w, r)
 		return

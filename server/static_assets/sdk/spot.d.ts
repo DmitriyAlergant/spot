@@ -179,6 +179,9 @@ declare namespace SpotSDK {
     title?: string;
     description?: string;
     tags?: string[];
+    owner?: string;
+    management_role?: 'owner' | 'admin' | 'maintainer';
+    state?: 'provisioning' | 'active' | 'deleted';
     [key: string]: unknown;
   }
 
@@ -230,6 +233,7 @@ declare namespace SpotSDK {
     };
     sites: {
       mine(opts?: RequestOptions): Promise<SiteInfo[]>;
+      manageable(opts?: RequestOptions): Promise<SiteInfo[]>;
       public(opts?: RequestOptions): Promise<SiteInfo[]>;
       delete(name: string, opts?: RequestOptions): Promise<DeleteSiteResult>;
     };

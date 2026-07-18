@@ -22,8 +22,12 @@ CREATE TABLE IF NOT EXISTS sites (
     title text NOT NULL DEFAULT '',
     description text NOT NULL DEFAULT '',
     tags text NOT NULL DEFAULT '[]',
+    state text NOT NULL DEFAULT 'active',
     content_dirty integer NOT NULL DEFAULT 0,
     content_generation integer NOT NULL DEFAULT 0,
+    policy_transition_generation integer NOT NULL DEFAULT 0,
+    policy_previous_hash text NOT NULL DEFAULT '',
+    policy_next_hash text NOT NULL DEFAULT '',
     content_external_mutation integer NOT NULL DEFAULT 0,
     content_external_mutation_started_at integer NOT NULL DEFAULT 0,
     content_external_mutation_owner text NOT NULL DEFAULT '',
@@ -43,6 +47,7 @@ CREATE TABLE IF NOT EXISTS site_deploy_audit (
     file_count integer NOT NULL DEFAULT 0,
     total_bytes integer NOT NULL DEFAULT 0,
     content_hash text NOT NULL DEFAULT '',
+    authorized_as text NOT NULL DEFAULT '',
     message text NOT NULL DEFAULT '',
     created_at datetime NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 );

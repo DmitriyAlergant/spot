@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +36,73 @@ func TestAccessPolicyAllows(t *testing.T) {
 				t.Errorf("Allows(%+v) with allow=%v = %v, want %v", tt.id, tt.allow, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAccessPolicyMaintainers(t *testing.T) {
+	policy, err := parseAccessPolicy("demo", []byte(`{
+		"maintainers": [" Alice@Example.com ", "Team-Estimation"],
+		"allow": ["visitors"]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.AllowsMaintainer(Identity{Email: "alice@example.com"}) {
+		t.Fatal("email maintainer did not match case-insensitively")
+	}
+	if !policy.AllowsMaintainer(Identity{Groups: []string{"team-estimation"}}) {
+		t.Fatal("group maintainer did not match case-insensitively")
+	}
+	if policy.AllowsMaintainer(Identity{Groups: []string{"visitors"}}) {
+		t.Fatal("visitor allowlist unexpectedly granted management")
+	}
+	for _, raw := range []string{
+		`{"maintainers":null}`,
+		`{"maintainers":"alice@example.com"}`,
+		`{"maintainers":[],"Maintainers":[]}`,
+	} {
+		if _, err := parseAccessPolicy("demo", []byte(raw)); err == nil {
+			t.Fatalf("parseAccessPolicy(%s) succeeded, want invalid maintainers error", raw)
+		}
+	}
+}
+
+func TestPolicyStoreClonesMaintainers(t *testing.T) {
+	store := NewPolicyStore("", time.Hour)
+	store.Set("demo", &AccessPolicy{Maintainers: []string{"alice@example.com"}}, nil)
+	first, err := store.For("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Maintainers[0] = "mallory@example.com"
+	second, err := store.For("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Maintainers[0] != "alice@example.com" {
+		t.Fatalf("cached maintainers aliased caller mutation: %v", second.Maintainers)
+	}
+}
+
+func TestPolicyStoreSetWinsConcurrentColdLoad(t *testing.T) {
+	store := NewPolicyStore("", time.Hour)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan *AccessPolicy, 1)
+	go func() {
+		policy, _ := store.Resolve("demo", func() (*AccessPolicy, error) {
+			close(started)
+			<-release
+			return &AccessPolicy{Maintainers: []string{"old@example.com"}}, nil
+		})
+		result <- policy
+	}()
+	<-started
+	store.Set("demo", &AccessPolicy{Maintainers: []string{"new@example.com"}}, nil)
+	close(release)
+	policy := <-result
+	if !policy.AllowsMaintainer(Identity{Email: "new@example.com"}) || policy.AllowsMaintainer(Identity{Email: "old@example.com"}) {
+		t.Fatalf("Resolve returned stale policy after Set: %+v", policy)
 	}
 }
 
@@ -423,5 +492,29 @@ func TestSiteAccessFailsClosedWithoutStore(t *testing.T) {
 	srv.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("authz with no policy or site store = %d, want 503 (fail closed)", rec.Code)
+	}
+}
+
+func TestPolicyStoreDoesNotCacheRequestCancellation(t *testing.T) {
+	for _, canceled := range []error{context.Canceled, context.DeadlineExceeded} {
+		store := NewPolicyStore("", time.Minute)
+		loads := 0
+		loader := func() (*AccessPolicy, error) {
+			loads++
+			if loads == 1 {
+				return nil, canceled
+			}
+			return &AccessPolicy{Maintainers: []string{"alice@example.com"}}, nil
+		}
+		if _, err := store.Resolve("demo", loader); !errors.Is(err, canceled) {
+			t.Fatalf("first resolve = %v, want %v", err, canceled)
+		}
+		policy, err := store.Resolve("demo", loader)
+		if err != nil || policy == nil || len(policy.Maintainers) != 1 {
+			t.Fatalf("second resolve = %+v, %v", policy, err)
+		}
+		if loads != 2 {
+			t.Fatalf("loader calls = %d, want 2", loads)
+		}
 	}
 }

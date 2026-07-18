@@ -664,6 +664,7 @@
     sites: {
       // Apex-only platform APIs: these work from the Spot root, not site subdomains.
       mine: async ({ retry } = {}) => (await api('/api/sites/mine', { retry })).sites,
+      manageable: async ({ retry } = {}) => (await api('/api/sites/manageable', { retry })).sites,
       public: async ({ retry } = {}) => (await api('/api/sites/public', { retry })).sites,
       delete: (name, { retry } = {}) =>
         api(`/api/sites/${encodeURIComponent(name)}`, { method: 'DELETE', retry }),

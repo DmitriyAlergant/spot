@@ -65,12 +65,28 @@ func applyAdditiveMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE sites ADD COLUMN tags text NOT NULL DEFAULT '[]'`); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, db, "sites", "state",
+		`ALTER TABLE sites ADD COLUMN state text NOT NULL DEFAULT 'active'`); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, db, "sites", "content_dirty",
 		`ALTER TABLE sites ADD COLUMN content_dirty integer NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
 	if err := ensureColumn(ctx, db, "sites", "content_generation",
 		`ALTER TABLE sites ADD COLUMN content_generation integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "policy_transition_generation",
+		`ALTER TABLE sites ADD COLUMN policy_transition_generation integer NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "policy_previous_hash",
+		`ALTER TABLE sites ADD COLUMN policy_previous_hash text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "sites", "policy_next_hash",
+		`ALTER TABLE sites ADD COLUMN policy_next_hash text NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := ensureColumn(ctx, db, "sites", "content_external_mutation",
@@ -87,6 +103,10 @@ func applyAdditiveMigrations(ctx context.Context, db *sql.DB) error {
 	}
 	if err := ensureColumn(ctx, db, "site_deploy_audit", "content_hash",
 		`ALTER TABLE site_deploy_audit ADD COLUMN content_hash text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "site_deploy_audit", "authorized_as",
+		`ALTER TABLE site_deploy_audit ADD COLUMN authorized_as text NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := ensureColumn(ctx, db, "site_cloudflare_publications", "account_id",

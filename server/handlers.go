@@ -182,6 +182,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/deploy", s.sameOriginOnly(s.limited(s.deployLimit, s.handleDeploy)))
 	mux.HandleFunc("GET /api/download", s.limited(s.fileLimit, s.handleSiteDownload))
 	mux.HandleFunc("GET /api/sites/mine", s.sameOriginOnly(s.limited(s.dbLimit, s.handleMySites)))
+	mux.HandleFunc("GET /api/sites/manageable", s.sameOriginOnly(s.limited(s.dbLimit, s.handleManageableSites)))
 	mux.HandleFunc("GET /api/sites/public", s.sameOriginOnly(s.limited(s.dbLimit, s.handlePublicSites)))
 	mux.HandleFunc("GET /api/sites/stats", s.sameOriginOnly(s.limited(s.dbLimit, s.handleSiteStats)))
 	mux.HandleFunc("GET /api/sites/{name}/preview", s.handleSitePreview)
@@ -407,6 +408,9 @@ func (s *Server) authorizeSiteAccess(w http.ResponseWriter, r *http.Request, sit
 	if site == "" {
 		return true
 	}
+	if !s.authorizeSiteLifecycle(w, r, site) {
+		return false
+	}
 	policy, err := s.policyForSite(r.Context(), site)
 	if err != nil {
 		log.Printf("authz: %v", err)
@@ -434,6 +438,47 @@ func (s *Server) authorizeSiteAccess(w http.ResponseWriter, r *http.Request, sit
 		return false
 	}
 	return true
+}
+
+func (s *Server) authorizeSiteLifecycle(w http.ResponseWriter, r *http.Request, site string) bool {
+	if lifecycle, ok := s.siteAdmin.(interface {
+		SiteState(context.Context, string) (SiteState, error)
+	}); ok {
+		state, err := lifecycle.SiteState(r.Context(), site)
+		if errors.Is(err, ErrSiteNotFound) || (err == nil && state != SiteStateActive) {
+			httpError(w, http.StatusNotFound, "no active site named "+site)
+			return false
+		}
+		if err != nil {
+			log.Printf("authz: lifecycle %s: %v", site, err)
+			httpError(w, http.StatusServiceUnavailable, "could not verify site lifecycle")
+			return false
+		}
+	}
+	if transitions, ok := s.siteAdmin.(interface {
+		HasPendingPolicyTransition(context.Context, string) (bool, error)
+	}); ok {
+		pending, err := transitions.HasPendingPolicyTransition(r.Context(), site)
+		if err != nil || pending {
+			httpError(w, http.StatusServiceUnavailable, "this site's access policy is awaiting recovery")
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) lockAuthorizedSiteMutation(w http.ResponseWriter, r *http.Request) (func(), bool) {
+	site := siteFromHost(s.requestHost(r), s.spotDomain)
+	if site == "" {
+		return func() {}, true
+	}
+	lock := s.siteMutationLock(site)
+	lock.Lock()
+	if !s.authorizeSiteAccess(w, r, site) {
+		lock.Unlock()
+		return nil, false
+	}
+	return lock.Unlock, true
 }
 
 func (s *Server) requireDeployIdentity(w http.ResponseWriter, r *http.Request) (Identity, bool) {
@@ -523,6 +568,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not read the upload")
 		return
 	}
+	unlock, ok := s.lockAuthorizedSiteMutation(w, r)
+	if !ok {
+		return
+	}
+	defer unlock()
 
 	stored, err := s.files.Put(r.Context(), site, header.Filename, contentType, file, header.Size)
 	if err != nil {
@@ -560,6 +610,11 @@ func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid file id")
 		return
 	}
+	unlock, ok := s.lockAuthorizedSiteMutation(w, r)
+	if !ok {
+		return
+	}
+	defer unlock()
 	if err := s.files.Delete(r.Context(), site, id, r.PathValue("name")); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			httpError(w, http.StatusNotFound, "file not found")
@@ -632,11 +687,39 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	site := siteFromHost(s.requestHost(r), s.spotDomain)
+	capabilitiesAvailable := s.siteLifecycleAllowsCapabilities(r.Context(), site)
 	writeJSON(w, http.StatusOK, meResponse{
 		Identity:     id,
-		AIAllowed:    s.aiAllowedFor(r.Context(), site, id),
-		SlackAllowed: s.slackAllowedFor(r.Context(), site, id),
+		AIAllowed:    capabilitiesAvailable && s.aiAllowedFor(r.Context(), site, id),
+		SlackAllowed: capabilitiesAvailable && s.slackAllowedFor(r.Context(), site, id),
 	})
+}
+
+// siteLifecycleAllowsCapabilities keeps /api/me available for identity while
+// failing its capability summaries closed for sites that are not currently
+// servable. Servers without lifecycle-aware site administration retain the
+// legacy behavior used by standalone and test configurations.
+func (s *Server) siteLifecycleAllowsCapabilities(ctx context.Context, site string) bool {
+	if site == "" {
+		return false
+	}
+	if lifecycle, ok := s.siteAdmin.(interface {
+		SiteState(context.Context, string) (SiteState, error)
+	}); ok {
+		state, err := lifecycle.SiteState(ctx, site)
+		if err != nil || state != SiteStateActive {
+			return false
+		}
+	}
+	if transitions, ok := s.siteAdmin.(interface {
+		HasPendingPolicyTransition(context.Context, string) (bool, error)
+	}); ok {
+		pending, err := transitions.HasPendingPolicyTransition(ctx, site)
+		if err != nil || pending {
+			return false
+		}
+	}
+	return true
 }
 
 // aiAllowedFor reports whether the visitor may spend the deployment's
@@ -767,6 +850,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "websocket API must be called from a site subdomain")
 		return
 	}
+	epoch := s.hub.SiteEpoch(site)
 	if !s.authorizeSiteAccess(w, r, site) {
 		return
 	}
@@ -788,6 +872,19 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	docOut := make(chan Event, 64)
 	roomOut := make(chan RoomEvent, 64)
+	revoked := make(chan struct{})
+	var revokeOnce sync.Once
+	revoke := func() {
+		revokeOnce.Do(func() {
+			close(revoked)
+			conn.CloseNow()
+		})
+	}
+	if !s.hub.RegisterSession(site, sessionID, epoch, docOut, revoke) {
+		_ = conn.Close(websocket.StatusPolicyViolation, "site access changed")
+		return
+	}
+	defer s.hub.UnregisterSession(site, sessionID)
 	defer s.hub.UnsubscribeAll(docOut)
 	defer s.roomHub.LeaveAll(sessionID)
 
@@ -816,7 +913,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-readDone:
 			return
+		case <-revoked:
+			return
 		case req := <-reqs:
+			select {
+			case <-revoked:
+				return
+			default:
+			}
 			switch req.Type {
 			case "subscribe":
 				scope, err := scopeFor(site, req.Collection)
@@ -1102,6 +1206,11 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	unlock, ok := s.lockAuthorizedSiteMutation(w, r)
+	if !ok {
+		return
+	}
+	defer unlock()
 	// The store treats an empty owner as "no ownership filter", so the owned
 	// call covers both the mine and non-mine cases.
 	doc, err := s.store.IncrementOwned(r.Context(), scope, collection, id, owner, body.Field, by)
@@ -1194,6 +1303,11 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("create: resolve owner (continuing unattributed): %v", err)
 		owner = ""
 	}
+	unlock, ok := s.lockAuthorizedSiteMutation(w, r)
+	if !ok {
+		return
+	}
+	defer unlock()
 	doc, err := s.store.Create(r.Context(), scope, collection, owner, data)
 	if err != nil {
 		s.storeError(w, err)
@@ -1236,6 +1350,11 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	unlock, ok := s.lockAuthorizedSiteMutation(w, r)
+	if !ok {
+		return
+	}
+	defer unlock()
 	// The store treats an empty owner as "no ownership filter", so the owned
 	// call covers both the mine and non-mine cases.
 	doc, err := s.store.UpdateOwned(r.Context(), scope, collection, id, owner, data)
@@ -1259,6 +1378,11 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	unlock, ok := s.lockAuthorizedSiteMutation(w, r)
+	if !ok {
+		return
+	}
+	defer unlock()
 	// The store treats an empty owner as "no ownership filter", so the owned
 	// call covers both the mine and non-mine cases.
 	if err := s.store.DeleteOwned(r.Context(), scope, collection, id, owner); err != nil {

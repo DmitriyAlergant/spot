@@ -243,7 +243,7 @@ func (s *Server) authorizeSlackUse(w http.ResponseWriter, r *http.Request, site 
 		return false
 	}
 	if !allowed {
-		httpError(w, http.StatusForbidden, "Slack is restricted to the site owner or a platform admin")
+		httpError(w, http.StatusForbidden, "Slack is restricted to the site owner, a maintainer, or a platform admin")
 		return false
 	}
 	return true

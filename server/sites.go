@@ -31,6 +31,10 @@ type SiteManager interface {
 	CanManageSite(ctx context.Context, site string, actor Identity) (bool, error)
 }
 
+type manageableSiteAdmin interface {
+	SitesManageableBy(ctx context.Context, actor Identity) ([]ManageableSite, error)
+}
+
 type ownedSiteJSON struct {
 	Name            string    `json:"name"`
 	URL             string    `json:"url"`
@@ -45,6 +49,50 @@ type ownedSiteJSON struct {
 	Restricted      bool      `json:"restricted"`
 	AllowCount      int       `json:"allow_count"`
 	Cloudflare      any       `json:"cloudflare,omitempty"`
+	Owner           string    `json:"owner,omitempty"`
+	ManagementRole  string    `json:"management_role,omitempty"`
+	State           SiteState `json:"state,omitempty"`
+}
+
+func (s *Server) handleManageableSites(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSitesAPI(w, r) {
+		return
+	}
+	actor, ok := s.requireDeployIdentity(w, r)
+	if !ok {
+		return
+	}
+	admin, ok := s.siteAdmin.(manageableSiteAdmin)
+	if !ok {
+		httpError(w, http.StatusServiceUnavailable, "manageable site listing is not configured")
+		return
+	}
+	sites, err := admin.SitesManageableBy(r.Context(), actor)
+	if err != nil {
+		log.Printf("manageable sites: %v", err)
+		httpError(w, http.StatusInternalServerError, "could not list manageable sites")
+		return
+	}
+	out := make([]ownedSiteJSON, 0, len(sites))
+	for _, site := range sites {
+		entry := ownedSiteJSON{
+			Name: site.Name, URL: s.siteURL(r, site.Name), Title: site.Title,
+			Description: site.Description, Tags: cloneSiteTags(site.Tags),
+			CreatedAt: site.CreatedAt, UpdatedAt: site.UpdatedAt,
+			FileCount: site.FileCount, TotalBytes: site.TotalBytes,
+			Owner: ownerDisplay(site.SiteRecord), ManagementRole: string(site.ManagementRole), State: site.State,
+		}
+		if site.State == SiteStateActive {
+			entry.Restricted, entry.AllowCount, entry.DownloadAllowed = s.policySummaryForSite(r.Context(), site.Name)
+			contentHash := site.ContentHash
+			if site.ContentHashUncertain {
+				contentHash = ""
+			}
+			entry.Cloudflare = s.cloudflareSummaryForSite(r.Context(), site.Name, contentHash, false)
+		}
+		out = append(out, entry)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sites": out})
 }
 
 type publicSiteJSON struct {
@@ -464,12 +512,57 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	siteLock.Lock()
 	defer siteLock.Unlock()
 
+	var decision ManagementDecision
+	if manager, ok := s.siteManager.(interface {
+		ManagementDecision(context.Context, string, Identity) (ManagementDecision, error)
+	}); ok {
+		var err error
+		decision, err = manager.ManagementDecision(r.Context(), site, actor)
+		switch {
+		case errors.Is(err, ErrSiteNotFound):
+			httpError(w, http.StatusNotFound, "no site named "+site)
+			return
+		case err != nil:
+			log.Printf("delete site %s: authorize: %v", site, err)
+			httpError(w, http.StatusInternalServerError, "could not authorize site deletion")
+			return
+		case !decision.Allowed:
+			s.recordDeployAudit(r, DeployAuditEvent{
+				Site: site, Actor: actor, Action: "delete", Status: "denied",
+				Message: "actor is not the site owner, a maintainer, or a platform admin",
+			})
+			httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can delete this site")
+			return
+		case decision.State == SiteStateProvisioning:
+			httpError(w, http.StatusConflict, "a provisioning site cannot be deleted")
+			return
+		}
+		if decision.State == SiteStateActive {
+			if s.cloudflarePubs != nil {
+				published, err := s.cloudflarePubs.Has(r.Context(), site)
+				if err != nil {
+					log.Printf("delete site %s: check cloudflare publication: %v", site, err)
+					httpError(w, http.StatusInternalServerError, "could not check the site's publication status")
+					return
+				}
+				if published {
+					httpError(w, http.StatusConflict, "unpublish this site from Cloudflare before deleting it")
+					return
+				}
+			}
+		}
+	}
+
 	// Everything scoped to the site goes: served files, uploads, and
 	// private collections. If purge fails, the registry row stays claimed
 	// so the owner can retry instead of freeing a partially purged name.
 	removedFiles := 0
 	mutationStarted := false
+	hadAccessPolicy := decision.State == SiteStateActive
 	purge := func(ctx context.Context) error {
+		if decision.State == SiteStateDeleted {
+			return nil
+		}
 		if s.cloudflarePubs != nil {
 			published, err := s.cloudflarePubs.Has(ctx, site)
 			if err != nil {
@@ -479,17 +572,62 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 				return errCloudflarePublicationExists
 			}
 		}
+		if decision.State == SiteStateActive {
+			current, policyErr := s.policyForSite(ctx, site)
+			if policyErr != nil && decision.Role == ManagementRoleMaintainer {
+				return fmt.Errorf("resolve management policy before deletion: %w", policyErr)
+			}
+			staging := restrictiveStagingPolicy(current)
+			data, err := marshalRestrictiveStagingPolicy(staging)
+			if err != nil {
+				return fmt.Errorf("prepare private deletion policy: %w", err)
+			}
+			generation := int64(0)
+			if reader, ok := s.siteAdmin.(interface {
+				SiteContentGeneration(context.Context, string) (int64, error)
+			}); ok {
+				generation, err = reader.SiteContentGeneration(ctx, site)
+				if err != nil {
+					return fmt.Errorf("read access-policy deletion generation: %w", err)
+				}
+			}
+			if generation > 0 {
+				err = s.commitPolicyObject(ctx, site, generation, data, false)
+			} else {
+				err = s.sites.Put(ctx, site, accessFileName, "application/json", data)
+			}
+			if err != nil {
+				return fmt.Errorf("make site private before deletion: %w", err)
+			}
+			if s.policies != nil {
+				s.policies.Set(site, staging, nil)
+			}
+			s.disconnectSiteRealtime(site)
+			if marker, ok := s.siteAdmin.(siteContentMutationMarker); ok {
+				if err := marker.MarkSiteContentDirty(ctx, site); err != nil {
+					return err
+				}
+			}
+			mutationStarted = true
+		}
 		paths, err := s.sites.List(ctx, site)
 		if err != nil {
 			return err
 		}
-		if marker, ok := s.siteAdmin.(siteContentMutationMarker); ok {
-			if err := marker.MarkSiteContentDirty(ctx, site); err != nil {
-				return err
+		if !mutationStarted {
+			marker, ok := s.siteAdmin.(siteContentMutationMarker)
+			if ok {
+				if err := marker.MarkSiteContentDirty(ctx, site); err != nil {
+					return err
+				}
 			}
 		}
 		mutationStarted = true
 		for _, path := range paths {
+			if path == accessFileName {
+				hadAccessPolicy = true
+				continue
+			}
 			if err := s.sites.Remove(ctx, site, path); err != nil {
 				return err
 			}
@@ -515,9 +653,9 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrDeployForbidden):
 		s.recordDeployAudit(r, DeployAuditEvent{
 			Site: site, Actor: actor, Action: "delete", Status: "denied",
-			Message: "actor is not the site owner or a platform admin",
+			Message: "actor is not the site owner, a maintainer, or a platform admin",
 		})
-		httpError(w, http.StatusForbidden, "only the site owner or a platform admin can delete this site")
+		httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can delete this site")
 	case errors.Is(err, errCloudflarePublicationExists):
 		httpError(w, http.StatusConflict, "unpublish this site from Cloudflare before deleting it")
 	case err != nil:
@@ -534,12 +672,34 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		})
 		httpError(w, http.StatusInternalServerError, "could not delete the site")
 	default:
+		if decision.State != SiteStateDeleted && hadAccessPolicy {
+			var err error
+			if decision.Role == ManagementRoleMaintainer {
+				if reader, ok := s.siteAdmin.(interface {
+					SiteContentGeneration(context.Context, string) (int64, error)
+				}); ok {
+					generation, generationErr := reader.SiteContentGeneration(r.Context(), site)
+					if generationErr == nil {
+						err = s.commitPolicyObject(r.Context(), site, generation, nil, true)
+					} else {
+						err = generationErr
+					}
+				}
+			} else {
+				err = s.sites.Remove(r.Context(), site, accessFileName)
+			}
+			if err != nil && !siteObjectNotFound(err) {
+				log.Printf("delete site %s: remove final policy: %v", site, err)
+				httpError(w, http.StatusInternalServerError, "site data was deleted but policy cleanup needs owner or admin recovery")
+				return
+			}
+		}
 		if s.policies != nil {
 			s.policies.Invalidate(site)
 		}
 		s.recordDeployAudit(r, DeployAuditEvent{
 			Site: site, Actor: actor, Action: "delete", Status: "success",
-			FileCount: removedFiles,
+			FileCount: removedFiles, AuthorizedAs: decision.Role,
 		})
 		writeJSON(w, http.StatusOK, map[string]any{"site": site, "files": removedFiles})
 	}
@@ -685,7 +845,7 @@ func (s *Server) requireCloudflareSite(w http.ResponseWriter, r *http.Request) (
 		httpError(w, http.StatusInternalServerError, "could not authorize Cloudflare action")
 		return "", Identity{}, false
 	case !allowed:
-		httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+		httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		return "", Identity{}, false
 	}
 	return site, actor, true
@@ -710,7 +870,7 @@ func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !allowed {
-		httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+		httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		return
 	}
 	out := s.cloudflareSummaryForSite(r.Context(), site, "", true)
@@ -771,7 +931,7 @@ func (s *Server) handleCloudflarePublish(w http.ResponseWriter, r *http.Request)
 			log.Printf("cloudflare %s: reauthorize: %v", site, authErr)
 			httpError(w, http.StatusInternalServerError, "could not authorize Cloudflare action")
 		} else {
-			httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+			httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		}
 		return
 	}
@@ -878,7 +1038,7 @@ func (s *Server) handleCloudflareResolveAccess(w http.ResponseWriter, r *http.Re
 			log.Printf("cloudflare Access resolution %s: reauthorize: %v", site, authErr)
 			httpError(w, http.StatusInternalServerError, "could not authorize Cloudflare action")
 		} else {
-			httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+			httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		}
 		return
 	}
@@ -949,7 +1109,7 @@ func (s *Server) handleCloudflareResolveProject(w http.ResponseWriter, r *http.R
 			log.Printf("cloudflare project resolution %s: reauthorize: %v", site, authErr)
 			httpError(w, http.StatusInternalServerError, "could not authorize Cloudflare action")
 		} else {
-			httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+			httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		}
 		return
 	}
@@ -1020,7 +1180,7 @@ func (s *Server) handleCloudflareResolveLegacy(w http.ResponseWriter, r *http.Re
 			log.Printf("cloudflare legacy resolution %s: reauthorize: %v", site, authErr)
 			httpError(w, http.StatusInternalServerError, "could not authorize Cloudflare action")
 		} else {
-			httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+			httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		}
 		return
 	}
@@ -1064,7 +1224,7 @@ func (s *Server) handleCloudflareUnpublish(w http.ResponseWriter, r *http.Reques
 			log.Printf("cloudflare unpublish %s: reauthorize: %v", site, authErr)
 			httpError(w, http.StatusInternalServerError, "could not authorize Cloudflare action")
 		} else {
-			httpError(w, http.StatusForbidden, "only the site owner or a platform admin can manage this Cloudflare publication")
+			httpError(w, http.StatusForbidden, "only the site owner, a maintainer, or a platform admin can manage this Cloudflare publication")
 		}
 		return
 	}

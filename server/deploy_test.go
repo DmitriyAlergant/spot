@@ -17,10 +17,11 @@ import (
 )
 
 type recordingDeployAuth struct {
-	err    error
-	action string
-	auths  []string
-	events []DeployAuditEvent
+	err           error
+	action        string
+	previousState SiteState
+	auths         []string
+	events        []DeployAuditEvent
 }
 
 func (a *recordingDeployAuth) AuthorizeDeploy(_ context.Context, site string, actor Identity) (DeployAuthorization, error) {
@@ -32,7 +33,11 @@ func (a *recordingDeployAuth) AuthorizeDeploy(_ context.Context, site string, ac
 	if action == "" {
 		action = "update"
 	}
-	return DeployAuthorization{Action: action}, nil
+	previousState := a.previousState
+	if previousState == "" {
+		previousState = SiteStateActive
+	}
+	return DeployAuthorization{Action: action, PreviousState: previousState}, nil
 }
 
 func (a *recordingDeployAuth) RecordDeploy(_ context.Context, event DeployAuditEvent) error {
@@ -530,6 +535,28 @@ func TestDeployPreserveAccessKeepsExistingPolicy(t *testing.T) {
 	}
 	if _, _, err := sites.Open(context.Background(), "secret", "old.txt"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("old.txt after preserving deploy = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeployDoesNotPreserveAccessWhileRecoveringProvisioningSite(t *testing.T) {
+	sites := newTestSiteStore(t)
+	if err := sites.Put(context.Background(), "secret", accessFileName, "application/json", []byte(`{"maintainers":["stale@example.com"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		sites: sites, deployAuth: &recordingDeployAuth{previousState: SiteStateProvisioning},
+		resolver: NewStaticResolver("owner@example.com", "Owner", nil), spotDomain: "spot.localhost",
+		trustedProxies: testTrustedProxies(t), deployLimit: NewRateLimiter(1000, 1000),
+	}
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, deployRequestOrderedFields(t, "spot.localhost", "secret", [][2]string{
+		{"index.html", "<h1>recovered</h1>"},
+	}, map[string]string{"preserve_access": "true"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovery deploy = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, _, err := sites.Open(context.Background(), "secret", accessFileName); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale provisioning policy survived recovery: %v", err)
 	}
 }
 

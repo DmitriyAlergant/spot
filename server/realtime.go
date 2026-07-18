@@ -30,12 +30,51 @@ type subKey struct {
 // registers one buffered channel; a slow consumer loses events rather
 // than blocking the fan-out for everyone else.
 type Hub struct {
-	mu   sync.Mutex
-	subs map[subKey]map[chan<- Event]struct{}
+	mu       sync.Mutex
+	subs     map[subKey]map[chan<- Event]struct{}
+	sessions map[string]map[string]realtimeSession
+	epochs   map[string]uint64
 }
 
 func NewHub() *Hub {
-	return &Hub{subs: map[subKey]map[chan<- Event]struct{}{}}
+	return &Hub{
+		subs:     map[subKey]map[chan<- Event]struct{}{},
+		sessions: map[string]map[string]realtimeSession{},
+		epochs:   map[string]uint64{},
+	}
+}
+
+type realtimeSession struct {
+	out    chan<- Event
+	revoke func()
+}
+
+func (h *Hub) SiteEpoch(site string) uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.epochs[site]
+}
+
+func (h *Hub) RegisterSession(site, sessionID string, expectedEpoch uint64, out chan<- Event, revoke func()) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.epochs[site] != expectedEpoch {
+		return false
+	}
+	if h.sessions[site] == nil {
+		h.sessions[site] = map[string]realtimeSession{}
+	}
+	h.sessions[site][sessionID] = realtimeSession{out: out, revoke: revoke}
+	return true
+}
+
+func (h *Hub) UnregisterSession(site, sessionID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.sessions[site], sessionID)
+	if len(h.sessions[site]) == 0 {
+		delete(h.sessions, site)
+	}
 }
 
 func (h *Hub) Subscribe(scope, collection string, out chan<- Event) {
@@ -77,6 +116,30 @@ func (h *Hub) Publish(scope, collection string, ev Event) {
 		case out <- ev:
 		default:
 		}
+	}
+}
+
+func (h *Hub) DisconnectScope(scope string) {
+	h.mu.Lock()
+	h.epochs[scope]++
+	sessions := h.sessions[scope]
+	delete(h.sessions, scope)
+	for _, session := range sessions {
+		for key, subscribers := range h.subs {
+			delete(subscribers, session.out)
+			if len(subscribers) == 0 {
+				delete(h.subs, key)
+			}
+		}
+	}
+	for key := range h.subs {
+		if key.scope == scope {
+			delete(h.subs, key)
+		}
+	}
+	h.mu.Unlock()
+	for _, session := range sessions {
+		session.revoke()
 	}
 }
 
@@ -212,6 +275,33 @@ func (h *RoomHub) Publish(scope, room, sessionID, event string, data json.RawMes
 		}
 	}
 	return true
+}
+
+func (h *RoomHub) DisconnectScope(scope string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	channels := map[chan<- RoomEvent]struct{}{}
+	for key, subscribers := range h.rooms {
+		if key.scope != scope {
+			continue
+		}
+		for _, sub := range subscribers {
+			channels[sub.out] = struct{}{}
+		}
+		delete(h.rooms, key)
+	}
+	for out := range channels {
+		for key, subscribers := range h.rooms {
+			for id, sub := range subscribers {
+				if sub.out == out {
+					delete(subscribers, id)
+				}
+			}
+			if len(subscribers) == 0 {
+				delete(h.rooms, key)
+			}
+		}
+	}
 }
 
 func (h *RoomHub) removeLocked(key roomKey, sessionID string) bool {
