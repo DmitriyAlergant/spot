@@ -75,12 +75,17 @@ func TestApplyAdditiveMigrationsAddsCloudflareStateColumns(t *testing.T) {
 	defer db.Close()
 
 	for _, statement := range []string{
+		`ALTER TABLE sites DROP COLUMN state`,
 		`ALTER TABLE sites DROP COLUMN content_dirty`,
 		`ALTER TABLE sites DROP COLUMN content_generation`,
+		`ALTER TABLE sites DROP COLUMN policy_transition_generation`,
+		`ALTER TABLE sites DROP COLUMN policy_previous_hash`,
+		`ALTER TABLE sites DROP COLUMN policy_next_hash`,
 		`ALTER TABLE sites DROP COLUMN content_external_mutation`,
 		`ALTER TABLE sites DROP COLUMN content_external_mutation_started_at`,
 		`ALTER TABLE sites DROP COLUMN content_external_mutation_owner`,
 		`ALTER TABLE site_deploy_audit DROP COLUMN content_hash`,
+		`ALTER TABLE site_deploy_audit DROP COLUMN authorized_as`,
 		`ALTER TABLE site_cloudflare_publications DROP COLUMN account_id`,
 		`ALTER TABLE site_cloudflare_publications DROP COLUMN zone_id`,
 		`ALTER TABLE site_cloudflare_publications DROP COLUMN dns_record_id`,
@@ -105,12 +110,17 @@ func TestApplyAdditiveMigrationsAddsCloudflareStateColumns(t *testing.T) {
 		t.Fatalf("migrate twice: %v", err)
 	}
 	for _, tc := range []struct{ table, column string }{
+		{"sites", "state"},
 		{"sites", "content_dirty"},
 		{"sites", "content_generation"},
+		{"sites", "policy_transition_generation"},
+		{"sites", "policy_previous_hash"},
+		{"sites", "policy_next_hash"},
 		{"sites", "content_external_mutation"},
 		{"sites", "content_external_mutation_started_at"},
 		{"sites", "content_external_mutation_owner"},
 		{"site_deploy_audit", "content_hash"},
+		{"site_deploy_audit", "authorized_as"},
 		{"site_cloudflare_publications", "account_id"},
 		{"site_cloudflare_publications", "zone_id"},
 		{"site_cloudflare_publications", "dns_record_id"},

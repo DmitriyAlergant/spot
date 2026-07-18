@@ -15,11 +15,14 @@ var errNoSiteStore = errors.New("no site store configured to resolve site policy
 
 func (s *Server) policyForSite(ctx context.Context, site string) (*AccessPolicy, error) {
 	if s.policies != nil {
-		policy, err, checkedStore := s.policies.ForWithStoreStatus(site)
-		if err != nil || policy != nil || checkedStore {
-			return policy, err
-		}
+		return s.policies.Resolve(site, func() (*AccessPolicy, error) {
+			return s.loadPolicyFromSiteStorage(ctx, site)
+		})
 	}
+	return s.loadPolicyFromSiteStorage(ctx, site)
+}
+
+func (s *Server) loadPolicyFromSiteStorage(ctx context.Context, site string) (*AccessPolicy, error) {
 	// Reaching here means no cached policy entry resolved the site and no
 	// site store is wired to read _access.json. Without a store the site's
 	// policy cannot be determined, so fail closed (deny) rather than treat
@@ -31,9 +34,6 @@ func (s *Server) policyForSite(ctx context.Context, site string) (*AccessPolicy,
 	rc, _, err := s.sites.Open(ctx, site, accessFileName)
 	if err != nil {
 		if siteObjectNotFound(err) {
-			if s.policies != nil {
-				s.policies.Set(site, nil, nil)
-			}
 			return nil, nil
 		}
 		return nil, err
@@ -44,13 +44,6 @@ func (s *Server) policyForSite(ctx context.Context, site string) (*AccessPolicy,
 		return nil, err
 	}
 	policy, err := parseAccessPolicy(site, raw)
-	if s.policies != nil {
-		if err != nil {
-			s.policies.Set(site, nil, err)
-		} else {
-			s.policies.Set(site, policy, nil)
-		}
-	}
 	return policy, err
 }
 

@@ -429,20 +429,24 @@ func TestPublicPolicyReplacementUpdatesMetadataBeforeWritingAccessPolicy(t *test
 		t.Fatalf("initial deploy = %d %s, want 200", rec.Code, rec.Body.String())
 	}
 
-	wroteAccess := false
+	accessWrites := 0
 	srv.sites = observePutSiteStore{
 		SiteStorage: srv.sites,
 		onPut: func(path string) {
 			if path != accessFileName {
 				return
 			}
-			wroteAccess = true
+			accessWrites++
 			var title, description string
 			if err := db.QueryRow(`SELECT title, description FROM sites WHERE name = ?`, "secret").Scan(&title, &description); err != nil {
 				t.Fatal(err)
 			}
-			if title != "New title" || description != "New description" {
-				t.Fatalf("metadata at access write = title %q description %q, want new metadata", title, description)
+			wantTitle, wantDescription := "Old title", "Old description"
+			if accessWrites > 1 {
+				wantTitle, wantDescription = "New title", "New description"
+			}
+			if title != wantTitle || description != wantDescription {
+				t.Fatalf("metadata at access write %d = title %q description %q, want %q and %q", accessWrites, title, description, wantTitle, wantDescription)
 			}
 		},
 	}
@@ -455,8 +459,8 @@ func TestPublicPolicyReplacementUpdatesMetadataBeforeWritingAccessPolicy(t *test
 	if rec.Code != http.StatusOK {
 		t.Fatalf("public policy redeploy = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if !wroteAccess {
-		t.Fatal("access policy was not written")
+	if accessWrites != 2 {
+		t.Fatalf("access policy writes = %d, want staging and final policy", accessWrites)
 	}
 }
 

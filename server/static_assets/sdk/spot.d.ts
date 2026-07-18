@@ -230,6 +230,7 @@ declare namespace SpotSDK {
     };
     sites: {
       mine(opts?: RequestOptions): Promise<SiteInfo[]>;
+      manageable(opts?: RequestOptions): Promise<SiteInfo[]>;
       public(opts?: RequestOptions): Promise<SiteInfo[]>;
       delete(name: string, opts?: RequestOptions): Promise<DeleteSiteResult>;
     };

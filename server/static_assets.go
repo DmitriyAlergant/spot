@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"io"
@@ -65,6 +66,19 @@ func (s *Server) serveAgentDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSiteStatic(w http.ResponseWriter, r *http.Request, site string) {
+	if lifecycle, ok := s.siteAdmin.(interface {
+		SiteState(context.Context, string) (SiteState, error)
+	}); ok {
+		state, err := lifecycle.SiteState(r.Context(), site)
+		if errors.Is(err, ErrSiteNotFound) || (err == nil && state != SiteStateActive) {
+			s.serveEmbedded404(w, r)
+			return
+		}
+		if err != nil {
+			httpError(w, http.StatusServiceUnavailable, "could not verify site lifecycle")
+			return
+		}
+	}
 	if !s.authorizeSiteAccess(w, r, site) {
 		return
 	}

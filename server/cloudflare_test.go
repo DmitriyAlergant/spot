@@ -364,8 +364,8 @@ func TestFailedPartialDeleteMarksContentHashUncertain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(remaining) != 2 {
-		t.Fatalf("remaining files = %v, want proof one of three was removed", remaining)
+	if len(remaining) != 3 || remaining[0] != accessFileName {
+		t.Fatalf("remaining files = %v, want deny-all policy plus two ordinary files after one removal", remaining)
 	}
 	owned, err := registry.SitesOwnedBy(context.Background(), Identity{Email: "alice@example.com"})
 	if err != nil {

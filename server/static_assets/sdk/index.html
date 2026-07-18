@@ -417,6 +417,24 @@
       text-transform: uppercase;
       cursor: pointer;
     }
+    .access-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .access-tab {
+      border: 2px solid var(--ink);
+      border-radius: 10px;
+      background: var(--paper);
+      color: var(--ink);
+      padding: 9px;
+      font: 700 11px/1 var(--font-mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .access-tab[aria-selected="true"] { background: var(--ink); color: #fff; }
     .access-search {
       display: flex;
       align-items: center;
@@ -838,6 +856,10 @@
             </div>
             <button class="access-clear" id="access-clear" type="button">Clear</button>
           </div>
+          <div class="access-tabs" role="tablist" aria-label="Policy list">
+            <button class="access-tab" id="access-visitors" type="button" role="tab" aria-selected="true">Visitors</button>
+            <button class="access-tab" id="access-maintainers" type="button" role="tab" aria-selected="false">Maintainers</button>
+          </div>
           <label class="access-search" for="access-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -934,6 +956,7 @@
       const accessPopover = $('access-popover'), accessStatus = $('access-status');
       const accessSearch = $('access-search'), accessResults = $('access-results');
       const accessSelected = $('access-selected'), accessClear = $('access-clear'), accessNote = $('accessnote');
+      const accessVisitors = $('access-visitors'), accessMaintainers = $('access-maintainers');
       const modal = $('install-modal'), installOpen = $('install-open'), installClose = $('install-close');
 
       $('suffix').textContent = '.' + location.host;
@@ -1012,7 +1035,11 @@
       let picked = [];        // [{ path, file }], paths site-relative
       let identity = null;
       let selectedAccess = [];
-      let accessAIVisitors = false;
+      let selectedMaintainers = [];
+      let accessMode = 'visitors';
+      let accessPolicyFields = {};
+      let accessAllowPresent = false;
+      let accessMaintainersPresent = false;
       let accessFileWarning = ''; // set when an uploaded _access.json can't be read
       let launching = false;
 
@@ -1036,6 +1063,7 @@
 
       const sanitizeName = (raw) => raw.toLowerCase()
         .replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
+      const recoveryName = sanitizeName(new URLSearchParams(location.search).get('site') || '');
 
       const ADJECTIVES = ['quick', 'sunny', 'fuzzy', 'brave', 'mellow', 'zesty', 'cosmic', 'tiny', 'golden', 'peppy'];
       const NOUNS = ['lunch', 'otter', 'comet', 'pickle', 'breeze', 'waffle', 'meadow', 'rocket', 'noodle', 'spark'];
@@ -1067,7 +1095,10 @@
         }
         picked = list;
         selectedAccess = [];
-        accessAIVisitors = false;
+        selectedMaintainers = [];
+        accessPolicyFields = {};
+        accessAllowPresent = false;
+        accessMaintainersPresent = false;
         accessSearch.value = '';
         directoryOptions = [];
         accessFileWarning = '';
@@ -1078,7 +1109,10 @@
         if (accessFile) {
           const parsed = await readAccessPolicy(accessFile.file);
           selectedAccess = parsed.entries;
-          accessAIVisitors = parsed.aiVisitors;
+          selectedMaintainers = parsed.maintainers;
+          accessPolicyFields = parsed.fields;
+          accessAllowPresent = parsed.allowPresent;
+          accessMaintainersPresent = parsed.maintainersPresent;
           if (!parsed.ok) {
             accessFileWarning = "Could not read the deploy's _access.json — set access here.";
           }
@@ -1086,7 +1120,7 @@
         const total = list.reduce((n, f) => n + f.file.size, 0);
         $('summary').textContent = list.length + ' file' + (list.length === 1 ? '' : 's') + ' ready to deploy';
         $('detail').textContent = fmtSize(total);
-        nameInput.value = sanitizeName(suggestion || root) || randomName();
+        nameInput.value = recoveryName || sanitizeName(suggestion || root) || randomName();
         renderAccess();
         show(ready);
         nameInput.focus();
@@ -1094,8 +1128,9 @@
       };
 
       const accessKey = (entry) => entry.type + ':' + entry.value.toLowerCase();
+      const selectedPolicyEntries = () => accessMode === 'maintainers' ? selectedMaintainers : selectedAccess;
       const hasSelectedAccess = (entry) =>
-        selectedAccess.some((item) => accessKey(item) === accessKey(entry));
+        selectedPolicyEntries().some((item) => accessKey(item) === accessKey(entry));
 
       // readAccessPolicy turns an uploaded _access.json into picker chips:
       // allow entries with "@" are users, the rest are groups (matching
@@ -1103,20 +1138,50 @@
       const readAccessPolicy = async (file) => {
         try {
           const data = JSON.parse(await file.text());
-          const allow = Array.isArray(data.allow) ? data.allow : [];
-          const aiVisitors = typeof data.ai === 'string' && data.ai.trim().toLowerCase() === 'visitors';
-          const entries = [];
-          for (const raw of allow) {
-            if (typeof raw !== 'string' || !raw.trim()) continue;
-            const value = raw.trim();
-            const entry = value.includes('@')
-              ? { type: 'user', value, label: value, meta: 'From file' }
-              : { type: 'group', value, label: value, meta: 'Group' };
-            if (!entries.some((e) => accessKey(e) === accessKey(entry))) entries.push(entry);
+          const policy = {};
+          for (const [key, value] of Object.entries(data)) {
+            const normalized = key.toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(policy, normalized)) throw new Error('duplicate policy field');
+            if (!['allow', 'maintainers', 'ai', 'slack', 'download'].includes(normalized)) throw new Error('unknown policy field');
+            policy[normalized] = value;
           }
-          return { entries, aiVisitors, ok: true };
+          const toEntries = (values) => {
+            const entries = [];
+            for (const raw of values) {
+              if (typeof raw !== 'string' || !raw.trim()) continue;
+              const value = raw.trim();
+              const entry = value.includes('@')
+                ? { type: 'user', value, label: value, meta: 'From file' }
+                : { type: 'group', value, label: value, meta: 'Group' };
+              if (!entries.some((e) => accessKey(e) === accessKey(entry))) entries.push(entry);
+            }
+            return entries;
+          };
+          const policyEntries = (key) => {
+            if (!Object.prototype.hasOwnProperty.call(policy, key)) return [];
+            if (!Array.isArray(policy[key]) || policy[key].some((value) => typeof value !== 'string')) {
+              throw new Error(key + ' must be an array of strings');
+            }
+            return policy[key];
+          };
+          const allow = policyEntries('allow');
+          const maintainers = policyEntries('maintainers');
+          const fields = {};
+          for (const key of ['ai', 'slack', 'download']) {
+            if (Object.prototype.hasOwnProperty.call(policy, key)) fields[key] = policy[key];
+          }
+          const entries = toEntries(allow);
+          const maintainerEntries = toEntries(maintainers);
+          return {
+            entries,
+            maintainers: maintainerEntries,
+            fields,
+            allowPresent: Object.prototype.hasOwnProperty.call(policy, 'allow'),
+            maintainersPresent: Object.prototype.hasOwnProperty.call(policy, 'maintainers'),
+            ok: true,
+          };
         } catch {
-          return { entries: [], aiVisitors: false, ok: false };
+          return { entries: [], maintainers: [], fields: {}, allowPresent: false, maintainersPresent: false, ok: false };
         }
       };
 
@@ -1167,10 +1232,13 @@
       };
 
       const toggleAccessEntry = (entry) => {
+        accessFileWarning = '';
         if (hasSelectedAccess(entry)) {
-          selectedAccess = selectedAccess.filter((item) => accessKey(item) !== accessKey(entry));
+          if (accessMode === 'maintainers') selectedMaintainers = selectedMaintainers.filter((item) => accessKey(item) !== accessKey(entry));
+          else selectedAccess = selectedAccess.filter((item) => accessKey(item) !== accessKey(entry));
         } else {
-          selectedAccess = [...selectedAccess, entry];
+          if (accessMode === 'maintainers') selectedMaintainers = [...selectedMaintainers, entry];
+          else selectedAccess = [...selectedAccess, entry];
         }
         renderAccess();
       };
@@ -1242,7 +1310,7 @@
 
       const renderSelectedAccess = () => {
         accessSelected.replaceChildren();
-        for (const entry of selectedAccess) {
+        for (const entry of selectedPolicyEntries()) {
           const chip = document.createElement('span');
           chip.className = 'access-chip';
           const label = document.createElement('span');
@@ -1259,7 +1327,11 @@
 
       const renderAccess = () => {
         const count = selectedAccess.length;
-        if (count === 0) {
+        const denyAllVisitors = accessAllowPresent && count === 0;
+        if (denyAllVisitors) {
+          accessStatus.textContent = 'Mesh · no visitors';
+          accessNote.textContent = 'No one can open it on the mesh. Clear to remove the restriction.';
+        } else if (count === 0) {
           accessStatus.textContent = 'Mesh · everyone';
           accessNote.textContent = accessFileWarning || 'No _access.json will be deployed.';
         } else if (count === 1) {
@@ -1269,7 +1341,18 @@
           accessStatus.textContent = 'Mesh · ' + count + ' invited';
           accessNote.textContent = 'Only these ' + count + ' people can open it on the mesh. Deploys _access.json.';
         }
-        accessOpen.classList.toggle('restricted', count > 0);
+        accessOpen.classList.toggle('restricted', count > 0 || denyAllVisitors);
+        accessVisitors.setAttribute('aria-selected', accessMode === 'visitors' ? 'true' : 'false');
+        accessMaintainers.setAttribute('aria-selected', accessMode === 'maintainers' ? 'true' : 'false');
+        $('access-title').textContent = accessMode === 'maintainers'
+          ? 'People and groups who can deploy, delete, and publish this site'
+          : 'Everyone on the mesh unless you invite specific people';
+        accessSearch.placeholder = accessMode === 'maintainers' ? 'Search maintainers' : 'Search visitors by email';
+        if (accessMode === 'maintainers') {
+          accessNote.textContent = selectedMaintainers.length
+            ? selectedMaintainers.length + ' maintainer' + (selectedMaintainers.length === 1 ? '' : 's') + ' can manage this site.'
+            : 'Only the immutable owner and platform admins can manage this site.';
+        }
         renderAccessResults();
         renderSelectedAccess();
       };
@@ -1291,10 +1374,10 @@
       };
 
       const accessPolicyFile = () => {
-        if (!selectedAccess.length) return null;
-        const allow = selectedAccess.map((entry) => entry.value);
-        const policy = { allow };
-        if (accessAIVisitors) policy.ai = 'visitors';
+        const policy = { ...accessPolicyFields };
+        if (selectedAccess.length || accessAllowPresent) policy.allow = selectedAccess.map((entry) => entry.value);
+        if (selectedMaintainers.length || accessMaintainersPresent) policy.maintainers = selectedMaintainers.map((entry) => entry.value);
+        if (!Object.keys(policy).length) return null;
         return new File(
           [JSON.stringify(policy, null, 2) + '\n'],
           '_access.json',
@@ -1317,13 +1400,21 @@
         else closeAccess();
       });
       accessClear.addEventListener('click', () => {
-        selectedAccess = [];
-        accessAIVisitors = false;
+        accessFileWarning = '';
+        if (accessMode === 'maintainers') {
+          selectedMaintainers = [];
+          accessMaintainersPresent = false;
+        } else {
+          selectedAccess = [];
+          accessAllowPresent = false;
+        }
         accessSearch.value = '';
         directoryOptions = [];
         renderAccess();
         accessSearch.focus();
       });
+      accessVisitors.addEventListener('click', () => { accessMode = 'visitors'; renderAccess(); });
+      accessMaintainers.addEventListener('click', () => { accessMode = 'maintainers'; renderAccess(); });
       accessSearch.addEventListener('input', () => {
         activeIndex = 0; // highlight the first match as the list changes
         fetchSuggestions(accessSearch.value.trim());
@@ -1379,7 +1470,10 @@
         filePick.value = '';
         singlePick.value = '';
         selectedAccess = [];
-        accessAIVisitors = false;
+        selectedMaintainers = [];
+        accessPolicyFields = {};
+        accessAllowPresent = false;
+        accessMaintainersPresent = false;
         accessSearch.value = '';
         clearError();
         show(idle);
@@ -1478,7 +1572,7 @@
         // The filename of each part carries the file's site-relative
         // path — the deploy API reconstructs the folder from it.
         for (const { path, file } of picked) {
-          if (path !== '_access.json') {
+          if (path !== '_access.json' || accessFileWarning) {
             form.append('files', file, path);
           }
         }

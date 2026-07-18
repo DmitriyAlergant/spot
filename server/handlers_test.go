@@ -14,6 +14,22 @@ import (
 	"github.com/coder/websocket"
 )
 
+type gatedRequestBody struct {
+	data    *strings.Reader
+	started chan struct{}
+	release chan struct{}
+	blocked bool
+}
+
+func (r *gatedRequestBody) Read(p []byte) (int, error) {
+	if !r.blocked {
+		r.blocked = true
+		close(r.started)
+		<-r.release
+	}
+	return r.data.Read(p)
+}
+
 func TestMeReportsAIAllowedAndGroups(t *testing.T) {
 	get := func(srv *Server) meResponse {
 		t.Helper()
@@ -102,6 +118,59 @@ func TestMeReportsAIAllowedAndGroups(t *testing.T) {
 	}
 	if get(restrictedStranger).AIAllowed {
 		t.Error("restricted-site stranger with ai=visitors: ai_allowed = true, want false")
+	}
+}
+
+func TestDocumentMutationRechecksLifecycleAfterBlockedBody(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	registry := NewSiteRegistry(db, nil)
+	owner := Identity{Email: "owner@example.com"}
+	if _, err := registry.AuthorizeDeploy(ctx, "demo", owner); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	sites, err := NewLocalSiteStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := NewHub()
+	srv := &Server{
+		store: &DocStore{db: db, hub: hub}, sites: sites, policies: NewPolicyStore(root, time.Minute),
+		siteAdmin: registry, siteManager: registry, deployAuth: registry, hub: hub,
+		resolver: NewStaticResolver(owner.Email, "Owner", nil), spotDomain: "spot.localhost",
+		trustedProxies: testTrustedProxies(t), dbLimit: NewRateLimiter(1000, 1000),
+		deployLimit: NewRateLimiter(1000, 1000),
+	}
+	handler := srv.routes()
+	body := &gatedRequestBody{
+		data: strings.NewReader(`{"title":"late"}`), started: make(chan struct{}), release: make(chan struct{}),
+	}
+	createReq := httptest.NewRequest(http.MethodPost, "http://demo.spot.localhost/api/db/posts", body)
+	createReq.Header.Set("Content-Type", "application/json")
+	createDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, createReq)
+		createDone <- rec
+	}()
+	<-body.started
+	deleteRec := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRec, httptest.NewRequest(http.MethodDelete, "http://spot.localhost/api/sites/demo", nil))
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	close(body.release)
+	createRec := <-createDone
+	if createRec.Code != http.StatusNotFound {
+		t.Fatalf("blocked create after delete = %d %s, want 404", createRec.Code, createRec.Body.String())
+	}
+	var documents int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM documents WHERE scope = 'demo'`).Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	if documents != 0 {
+		t.Fatalf("documents recreated after deletion = %d", documents)
 	}
 }
 

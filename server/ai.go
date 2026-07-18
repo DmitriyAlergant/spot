@@ -789,7 +789,7 @@ func (s *Server) authorizeAIUse(w http.ResponseWriter, r *http.Request, site str
 		return false
 	}
 	if !allowed {
-		httpError(w, http.StatusForbidden, "AI is restricted to the site owner or a platform admin")
+		httpError(w, http.StatusForbidden, "AI is restricted to the site owner, a maintainer, or a platform admin")
 		return false
 	}
 	return true

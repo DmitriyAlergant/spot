@@ -288,6 +288,7 @@ func TestSitesAPIIsApexOnly(t *testing.T) {
 	}
 	for _, tt := range []struct{ method, path string }{
 		{http.MethodGet, "/api/sites/mine"},
+		{http.MethodGet, "/api/sites/manageable"},
 		{http.MethodGet, "/api/sites/public"},
 		{http.MethodGet, "/api/sites/stats"},
 		{http.MethodDelete, "/api/sites/demo"},
@@ -323,6 +324,7 @@ func TestSitesAPIRequiresIdentity(t *testing.T) {
 	}
 	for _, tt := range []struct{ method, path string }{
 		{http.MethodGet, "/api/sites/mine"},
+		{http.MethodGet, "/api/sites/manageable"},
 		{http.MethodGet, "/api/sites/public"},
 		{http.MethodDelete, "/api/sites/demo"},
 	} {

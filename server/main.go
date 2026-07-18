@@ -474,6 +474,8 @@ func main() {
 	var policies *PolicyStore
 	if cfg.StorageMode == storageModeLocal {
 		policies = NewPolicyStore(cfg.SitesDir, 5*time.Second)
+	} else {
+		policies = NewPolicyStore("", 5*time.Second)
 	}
 	srv := &Server{
 		store:          store,
@@ -496,6 +498,7 @@ func main() {
 		trustedProxies: trustedProxies,
 		serveStatic:    true,
 	}
+	registry.SetPolicyResolver(srv.policyForSite)
 
 	httpSrv := &http.Server{
 		Addr:              listenAddr(cfg.Port),

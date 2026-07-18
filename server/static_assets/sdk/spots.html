@@ -1100,7 +1100,7 @@
       // ─── my spots ─────────────────────────────────────────────
       let mySites = [];
       const siteList = $('sitelist');
-      let armed = null; // { button, timer } for the pending delete
+      let armed = null; // { button, label, timer } for the pending delete
 	  let cloudflarePollTimer = null;
 	  let mineLoading = false;
 
@@ -1121,7 +1121,7 @@
       const disarm = () => {
         if (!armed) return;
         armed.button.classList.remove('arming');
-        armed.button.textContent = 'Delete';
+        armed.button.textContent = armed.label;
         armed.button.style.width = '';
         armed.button.removeAttribute('title');
         clearTimeout(armed.timer);
@@ -1350,7 +1350,7 @@
 		}
 	  };
 
-      const deleteSite = async (site, row, button) => {
+      const deleteSite = async (site, row, button, label) => {
         const width = button.offsetWidth;
         disarm();
         button.style.width = width + 'px';
@@ -1360,7 +1360,7 @@
           await api('/api/sites/' + encodeURIComponent(site.name), { method: 'DELETE' });
         } catch (err) {
           button.disabled = false;
-          button.textContent = 'Delete';
+          button.textContent = label;
           button.style.width = '';
           toast(err.message);
           return;
@@ -1374,8 +1374,28 @@
         }, 380);
       };
 
+      const armSiteDelete = (site, row, button, label, title) => {
+        if (button.disabled) return;
+        if (armed && armed.button === button) {
+          deleteSite(site, row, button, label);
+          return;
+        }
+        disarm();
+        // Freeze the button's width before swapping the label so arming
+        // never reflows the row — the armed copy must fit that width.
+        button.style.width = button.offsetWidth + 'px';
+        button.classList.add('arming');
+        button.textContent = 'Sure?';
+        button.title = title;
+        armed = { button, label, timer: setTimeout(disarm, 4000) };
+      };
+
       const renderDeploys = () => {
-        $('deploys-sub').textContent = mySites.length + ' live' + (whoami ? ' · ' + whoami : '');
+		const activeCount = mySites.filter((site) => site.state !== 'deleted').length;
+		const recoveryCount = mySites.length - activeCount;
+		$('deploys-sub').textContent = activeCount + ' active' +
+		  (recoveryCount ? ' · ' + recoveryCount + ' recovery' : '') +
+		  (whoami ? ' · ' + whoami : '');
         siteList.replaceChildren();
         if (!mySites.length) {
           showNote('deploys-note', 'No spots yet', '');
@@ -1402,6 +1422,36 @@
           name.textContent = site.name;
           const cf = site.cloudflare || {};
           head.append(name);
+          if (site.management_role === 'maintainer') {
+            const role = document.createElement('span');
+            role.className = 'badge';
+            role.textContent = 'Maintainer · owned by ' + (site.owner || 'site owner');
+            head.append(role);
+          }
+          if (site.state === 'deleted') {
+            const note = document.createElement('p');
+            note.className = 'sitemeta';
+            note.textContent = 'Deleted site · the name remains reserved for recovery';
+            info.append(head, note);
+            const recovery = document.createElement('div');
+            recovery.className = 'actions';
+            const redeploy = document.createElement('a');
+            redeploy.className = 'btn btn-open';
+            redeploy.href = '/?site=' + encodeURIComponent(site.name);
+            redeploy.textContent = 'Redeploy same name';
+            const release = document.createElement('button');
+            release.type = 'button';
+            release.className = 'btn btn-delete';
+            release.textContent = 'Release name';
+            release.addEventListener('click', (e) => {
+              e.stopPropagation();
+              armSiteDelete(site, row, release, 'Release name', 'Click again to release');
+            });
+            recovery.append(redeploy, release);
+            row.append(info, recovery);
+            siteList.appendChild(row);
+            continue;
+          }
           // Chips get their own row so placement never depends on how much
           // of the title row happens to be left over.
           const chips = document.createElement('div');
@@ -1569,19 +1619,7 @@
 		  }
           del.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (del.disabled) return;
-            if (armed && armed.button === del) {
-              deleteSite(site, row, del);
-              return;
-            }
-            disarm();
-            // Freeze the button's width before swapping the label so arming
-            // never reflows the row — the armed copy must fit that width.
-            del.style.width = del.offsetWidth + 'px';
-            del.classList.add('arming');
-            del.textContent = 'Sure?';
-            del.title = 'Click again to delete';
-            armed = { button: del, timer: setTimeout(disarm, 4000) };
+            armSiteDelete(site, row, del, 'Delete', 'Click again to delete');
           });
 
           actions.append(open, copy);
@@ -1635,7 +1673,7 @@
 		}
 		mineLoading = true;
         try {
-          const body = await api('/api/sites/mine');
+          const body = await api('/api/sites/manageable');
           mySites = body.sites || [];
           renderDeploys();
         } catch (err) {
