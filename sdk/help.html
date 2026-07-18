@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#5a4bf0">
+  <title>Spot — field guide</title>
+  <meta name="description" content="A short guide to publishing, sharing, and managing sites with Spot.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pacifico&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --field: #5a4bf0;
+      --grid: rgba(255, 255, 255, .09);
+      --ink: #15121e;
+      --card: #fffefb;
+      --paper: #fff7d6;
+      --muted: #716b7e;
+      --violet-soft: #e7e2ff;
+      --mint: #d9f4e1;
+      --green: #23b14d;
+      --orange: #ff9f1c;
+      --orange-soft: #ffe3c2;
+      --pink: #f7258b;
+      --blue: #dff5ff;
+      --line: 3px solid var(--ink);
+      --shadow: 8px 9px 0 var(--ink);
+      --font-logo: 'Pacifico', 'Brush Script MT', cursive;
+      --font-mono: 'Space Mono', ui-monospace, 'SF Mono', monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 32px; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(var(--grid) 1.5px, transparent 1.5px),
+        linear-gradient(90deg, var(--grid) 1.5px, transparent 1.5px),
+        var(--field);
+      background-size: 44px 44px, 44px 44px, auto;
+      font-family: var(--font-mono);
+    }
+    a { color: inherit; }
+    button, input { font: inherit; }
+    a:focus-visible, button:focus-visible {
+      outline: 3px solid var(--paper);
+      outline-offset: 4px;
+    }
+
+    .topbar {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px 24px 8px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .brand {
+      position: relative;
+      z-index: 0;
+      color: #fff;
+      font: 400 32px/1.35 var(--font-logo);
+      text-decoration: none;
+    }
+    .brand::before, .brand::after {
+      content: attr(data-text);
+      position: absolute;
+      inset: 0;
+      color: var(--ink);
+      -webkit-text-stroke: .14em var(--ink);
+    }
+    .brand::before { z-index: -1; }
+    .brand::after { z-index: -2; transform: translate(.05em, .07em); }
+    .hero {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 76px 24px 68px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(270px, .52fr);
+      gap: 56px;
+      align-items: end;
+    }
+    .eyebrow, .section-kicker, .mini-label {
+      margin: 0;
+      font: 700 10px/1.5 var(--font-mono);
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+    .eyebrow { color: var(--paper); }
+    .hero h1 {
+      max-width: 800px;
+      margin: 18px 0 24px;
+      color: #fff;
+      font: 700 clamp(48px, 8vw, 92px)/.96 var(--font-mono);
+      letter-spacing: -.07em;
+      text-wrap: balance;
+      text-shadow: 5px 6px 0 var(--ink);
+    }
+    .hero h1 em {
+      display: inline-block;
+      color: var(--paper);
+      font: 400 1.08em/1 var(--font-logo);
+      letter-spacing: 0;
+      transform: rotate(-3deg);
+    }
+    .lede {
+      max-width: 680px;
+      margin: 0;
+      color: rgba(255,255,255,.9);
+      font: 700 15px/1.8 var(--font-mono);
+    }
+    .hero-ticket {
+      position: relative;
+      border: var(--line);
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      transform: rotate(2deg);
+    }
+    .hero-ticket::before, .hero-ticket::after {
+      content: '';
+      position: absolute;
+      top: 38px;
+      width: 20px;
+      height: 20px;
+      border: var(--line);
+      border-radius: 50%;
+      background: var(--field);
+    }
+    .hero-ticket::before { left: -13px; }
+    .hero-ticket::after { right: -13px; }
+    .hero-ticket strong {
+      display: block;
+      margin: 14px 0 8px;
+      font-size: 19px;
+    }
+    .hero-ticket p:last-child {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.75;
+    }
+
+    .guide-shell {
+      border-top: var(--line);
+      background:
+        radial-gradient(circle at 1px 1px, rgba(21,18,30,.09) 1.2px, transparent 1.2px),
+        #f0edff;
+      background-size: 24px 24px;
+    }
+    .guide {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 68px 24px 110px;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      gap: 64px;
+      align-items: start;
+    }
+    .route {
+      position: sticky;
+      top: 24px;
+      border: var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: 6px 7px 0 var(--ink);
+      padding: 20px;
+    }
+    .route-title {
+      margin: 0 0 15px;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .route ol { margin: 0; padding: 0; list-style: none; }
+    .route li + li { border-top: 2px dashed #c7c1d4; }
+    .route a {
+      display: grid;
+      grid-template-columns: 30px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .route a:hover, .route a.active { color: var(--ink); }
+    .route a.active .route-number { background: var(--paper); transform: rotate(-8deg); }
+    .route-number {
+      width: 27px;
+      height: 27px;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      transition: transform .15s ease, background .15s ease;
+    }
+    .route-foot {
+      margin: 16px 0 0;
+      border-top: 2px solid var(--ink);
+      padding-top: 14px;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.75;
+    }
+
+    .chapter { margin-bottom: 92px; }
+    .chapter:last-child { margin-bottom: 0; }
+    .chapter-head {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 26px;
+    }
+    .chapter-number {
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      border: var(--line);
+      border-radius: 16px;
+      background: var(--paper);
+      box-shadow: 4px 5px 0 var(--ink);
+      font-size: 18px;
+      font-weight: 700;
+      transform: rotate(-4deg);
+    }
+    .chapter h2 {
+      margin: 3px 0 8px;
+      font: 700 clamp(28px, 4.5vw, 46px)/1.08 var(--font-mono);
+      letter-spacing: -.05em;
+    }
+    .chapter-intro {
+      max-width: 680px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin: 28px 0;
+      counter-reset: steps;
+    }
+    .step-card {
+      position: relative;
+      min-height: 170px;
+      border: var(--line);
+      border-radius: 16px;
+      background: var(--card);
+      padding: 21px 18px 18px;
+      counter-increment: steps;
+    }
+    .step-card:nth-child(2) { background: var(--blue); }
+    .step-card:nth-child(3) { background: var(--mint); }
+    .step-card::before {
+      content: '0' counter(steps);
+      display: block;
+      margin-bottom: 20px;
+      color: var(--field);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+    }
+    .step-card h3 { margin: 0 0 10px; font-size: 15px; }
+    .step-card p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+
+    .command {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: var(--line);
+      border-radius: 14px;
+      background: var(--ink);
+      box-shadow: 5px 6px 0 var(--orange);
+      padding: 14px 14px 14px 18px;
+      color: #fff;
+    }
+    .command code {
+      min-width: 0;
+      flex: 1;
+      overflow-x: auto;
+      font-size: 12.5px;
+      line-height: 1.6;
+      white-space: nowrap;
+    }
+    .prompt { color: #8ef0a9; }
+    .copy {
+      flex: 0 0 auto;
+      border: 2px solid #fff;
+      border-radius: 8px;
+      background: transparent;
+      color: #fff;
+      padding: 8px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .copy:hover { background: #fff; color: var(--ink); }
+
+    .screen {
+      overflow: hidden;
+      margin: 28px 0;
+      border: var(--line);
+      border-radius: 20px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .screen-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      border-bottom: var(--line);
+      background: var(--ink);
+      padding: 11px 14px;
+    }
+    .screen-dot { width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; }
+    .screen-dot:nth-child(1) { background: var(--pink); }
+    .screen-dot:nth-child(2) { background: var(--orange); }
+    .screen-dot:nth-child(3) { background: var(--green); }
+    .screen-url {
+      min-width: 0;
+      margin-left: 8px;
+      overflow: hidden;
+      color: rgba(255,255,255,.65);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .screen-body {
+      min-height: 355px;
+      display: grid;
+      place-items: center;
+      padding: 40px;
+      background:
+        linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px),
+        var(--field);
+      background-size: 34px 34px;
+    }
+    .drop-card {
+      width: min(480px, 100%);
+      border: var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: 7px 8px 0 var(--ink);
+      padding: 34px;
+      text-align: center;
+    }
+    .drop-icon {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 20px;
+      border: var(--line);
+      border-radius: 16px;
+      background: var(--paper);
+      font-size: 24px;
+      transform: rotate(-4deg);
+    }
+    .drop-card strong {
+      display: block;
+      font-size: 15px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .drop-card p { margin: 9px 0 0; color: var(--muted); font-size: 10.5px; letter-spacing: .11em; text-transform: uppercase; }
+    figcaption {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      border-top: var(--line);
+      padding: 15px 18px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+    }
+    .caption-tag { color: var(--field); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+
+    .callout {
+      display: grid;
+      grid-template-columns: 46px 1fr;
+      gap: 16px;
+      align-items: start;
+      border: var(--line);
+      border-radius: 16px;
+      background: var(--paper);
+      padding: 18px;
+    }
+    .callout-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      background: #fff;
+      font-weight: 700;
+    }
+    .callout strong { display: block; margin-bottom: 6px; font-size: 13px; }
+    .callout p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+
+    .agent-guide {
+      border: var(--line);
+      border-radius: 18px;
+      background: var(--violet-soft);
+      box-shadow: 5px 6px 0 var(--ink);
+      padding: 22px;
+    }
+    .agent-guide-head {
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .agent-guide h3 {
+      margin: 0 0 7px;
+      font-size: 16px;
+    }
+    .agent-guide p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.7;
+    }
+    .agent-command {
+      align-items: stretch;
+      margin: 18px 0 16px 62px;
+      box-shadow: 5px 6px 0 var(--green);
+    }
+    .agent-command code {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .agent-link {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 62px;
+      border: 2px solid var(--ink);
+      border-radius: 9px;
+      background: var(--card);
+      box-shadow: 3px 4px 0 var(--ink);
+      padding: 9px 12px;
+      color: var(--ink);
+      font-size: 10.5px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .agent-link:hover { background: var(--paper); }
+
+    .access-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin: 28px 0;
+    }
+    .access-card {
+      border: var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: 5px 6px 0 var(--ink);
+      padding: 22px;
+    }
+    .access-card.internet { background: var(--orange-soft); }
+    .access-top { display: flex; align-items: center; gap: 11px; }
+    .access-icon {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--ink);
+      border-radius: 11px;
+      background: #fff;
+      font-size: 17px;
+    }
+    .access-card h3 { margin: 0; font-size: 16px; }
+    .access-card > p { min-height: 66px; margin: 15px 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .choice {
+      display: flex;
+      gap: 9px;
+      align-items: center;
+      margin-top: 8px;
+      border: 2px solid var(--ink);
+      border-radius: 10px;
+      background: rgba(255,255,255,.78);
+      padding: 10px;
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    .choice-dot { width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--green); }
+    .choice:last-child .choice-dot { background: var(--pink); }
+
+    .site-shot .screen-body { min-height: 0; display: block; padding: 30px; }
+    .fake-site {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      border: var(--line);
+      border-radius: 15px;
+      background: var(--card);
+      box-shadow: 5px 6px 0 var(--ink);
+      padding: 20px;
+    }
+    .fake-site-main { min-width: 0; flex: 1; }
+    .fake-site h3 { margin: 0 0 9px; font-size: 16px; }
+    .chips { display: flex; gap: 7px; flex-wrap: wrap; }
+    .chip {
+      border: 2px solid var(--ink);
+      border-radius: 999px;
+      background: var(--mint);
+      padding: 6px 9px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .chip.net { background: var(--orange-soft); }
+    .fake-url { margin: 10px 0 0; color: var(--field); font-size: 10.5px; font-weight: 700; text-decoration: underline; }
+    .fake-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .fake-button {
+      border: 2px solid var(--ink);
+      border-radius: 9px;
+      background: var(--paper);
+      padding: 9px 10px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .manage-list { display: grid; gap: 12px; margin-top: 26px; }
+    .manage-row {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      border: var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      padding: 14px 16px;
+    }
+    .manage-row:nth-child(2) { background: var(--blue); }
+    .manage-row:nth-child(3) { background: var(--mint); }
+    .manage-icon { font-size: 22px; }
+    .manage-row strong { display: block; margin-bottom: 5px; font-size: 13px; }
+    .manage-row span { color: var(--muted); font-size: 11.5px; line-height: 1.65; }
+    .deep-link {
+      color: var(--field);
+      font-size: 10.5px;
+      font-weight: 700;
+      text-underline-offset: 3px;
+      white-space: nowrap;
+    }
+
+    .release {
+      position: relative;
+      border: var(--line);
+      border-radius: 20px;
+      background: var(--ink);
+      box-shadow: 7px 8px 0 var(--orange);
+      padding: 28px;
+      color: #fff;
+    }
+    .release::after {
+      content: 'NEW';
+      position: absolute;
+      top: -14px;
+      right: 24px;
+      border: var(--line);
+      border-radius: 9px;
+      background: var(--paper);
+      padding: 8px 10px;
+      color: var(--ink);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      transform: rotate(3deg);
+    }
+    .release-date { color: #b9b2cc; }
+    .release h3 { margin: 11px 0 15px; color: var(--paper); font-size: 20px; }
+    .release ul { display: grid; gap: 11px; margin: 0; padding-left: 20px; color: #e6e1ef; font-size: 12.5px; line-height: 1.7; }
+    .release a { color: #fff; text-underline-offset: 4px; }
+    .older-release {
+      display: flex;
+      gap: 14px;
+      margin-top: 18px;
+      border-bottom: 2px dashed #b9b3c6;
+      padding: 0 4px 14px;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.7;
+    }
+    .older-release time { flex: 0 0 92px; color: var(--ink); font-weight: 700; }
+
+    .bottom-cta {
+      border-top: var(--line);
+      background: var(--paper);
+    }
+    .bottom-cta-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 58px 24px;
+      display: flex;
+      gap: 28px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .bottom-cta h2 { margin: 0 0 8px; font: 700 clamp(24px, 4vw, 38px)/1.1 var(--font-mono); letter-spacing: -.04em; }
+    .bottom-cta p { margin: 0; color: var(--muted); font-size: 12.5px; }
+    .cta-button {
+      flex: 0 0 auto;
+      border: var(--line);
+      border-radius: 999px;
+      background: var(--field);
+      box-shadow: 5px 6px 0 var(--ink);
+      padding: 14px 20px;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .13em;
+      text-decoration: none;
+      text-transform: uppercase;
+      transition: transform .12s ease, box-shadow .12s ease;
+    }
+    .cta-button:hover { transform: translate(-2px,-2px); box-shadow: 7px 8px 0 var(--ink); }
+    footer {
+      border-top: var(--line);
+      background: var(--ink);
+      padding: 28px 24px;
+      color: rgba(255,255,255,.7);
+      text-align: center;
+      font-size: 10.5px;
+      line-height: 2;
+    }
+    footer a { color: #fff; text-underline-offset: 3px; }
+
+    @media (max-width: 840px) {
+      .hero { grid-template-columns: 1fr; gap: 32px; padding-top: 56px; }
+      .hero-ticket { max-width: 440px; transform: rotate(1deg); }
+      .guide { grid-template-columns: 1fr; gap: 38px; }
+      .route { position: static; }
+      .route ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+      .route li + li { border-top: 0; }
+      .route a { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+      .route-foot { display: none; }
+      .steps { grid-template-columns: 1fr; }
+      .step-card { min-height: 0; }
+    }
+    @media (max-width: 620px) {
+      .hero { padding-top: 48px; padding-bottom: 54px; }
+      .hero h1 { font-size: clamp(44px, 14vw, 68px); }
+      .guide { padding-top: 44px; padding-bottom: 76px; }
+      .route { padding: 13px; }
+      .route-title { display: none; }
+      .route a { font-size: 9.5px; padding: 5px 0; }
+      .chapter { margin-bottom: 72px; }
+      .chapter-head { grid-template-columns: 46px 1fr; gap: 13px; }
+      .chapter-number { width: 44px; height: 44px; border-radius: 13px; }
+      .access-grid { grid-template-columns: 1fr; }
+      .screen-body { min-height: 285px; padding: 20px; }
+      .drop-card { padding: 26px 18px; }
+      .site-shot .screen-body { padding: 18px; }
+      .fake-site { align-items: flex-start; flex-direction: column; }
+      .manage-row { grid-template-columns: 32px minmax(0, 1fr); }
+      .manage-row .deep-link { grid-column: 2; }
+      .agent-command, .agent-link { margin-left: 0; }
+      .agent-command { flex-direction: column; }
+      .agent-command .copy { width: 100%; }
+      .older-release { flex-direction: column; gap: 4px; }
+      .older-release time { flex-basis: auto; }
+      .bottom-cta-inner { align-items: flex-start; flex-direction: column; }
+      .cta-button { width: 100%; text-align: center; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" data-text="Spot">Spot</a>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">The five-minute field guide</p>
+        <h1 id="page-title">Put your work <em>on the spot.</em></h1>
+        <p class="lede">Spot turns a folder into a link. Here’s the short route from first deploy to sharing it safely—plus the few controls worth knowing later.</p>
+      </div>
+      <aside class="hero-ticket" aria-label="Guide summary">
+        <p class="mini-label">Route 01 → 04</p>
+        <strong>No account ceremony.</strong>
+        <p>Bring an <code>index.html</code>. Choose an audience. Keep the same URL every time you redeploy.</p>
+      </aside>
+    </section>
+
+    <div class="guide-shell">
+      <div class="guide">
+        <nav class="route" aria-label="On this page">
+          <p class="route-title">Your route</p>
+          <ol>
+            <li><a href="#publish" class="active"><span class="route-number">01</span><span>Publish</span></a></li>
+            <li><a href="#share"><span class="route-number">02</span><span>Share</span></a></li>
+            <li><a href="#manage"><span class="route-number">03</span><span>Manage</span></a></li>
+            <li><a href="#releases"><span class="route-number">04</span><span>What’s new</span></a></li>
+          </ol>
+          <p class="route-foot">Each heading is a deep link. Bookmark the stop you need or send it to a teammate.</p>
+        </nav>
+
+        <div class="chapters">
+          <section class="chapter" id="publish" aria-labelledby="publish-title">
+            <div class="chapter-head">
+              <span class="chapter-number">01</span>
+              <div>
+                <p class="section-kicker">Start here</p>
+                <h2 id="publish-title">Publish a folder.</h2>
+                <p class="chapter-intro">Every Spot needs an <code>index.html</code>. Drop the folder in the browser for the fastest first run, or install the CLI if you’ll deploy more than once.</p>
+              </div>
+            </div>
+
+            <div class="steps">
+              <article class="step-card"><h3>Bring the folder</h3><p>A single HTML file works. CSS, images, scripts, and nested folders come along for the ride.</p></article>
+              <article class="step-card"><h3>Name the spot</h3><p>Use a short, durable name. Redeploying the same name updates the site at the same address.</p></article>
+              <article class="step-card"><h3>Choose access</h3><p>Leave it open to your mesh, or invite specific email addresses before you launch.</p></article>
+            </div>
+
+            <div class="command" aria-label="CLI deploy command">
+              <code><span class="prompt">$</span> spot deploy project-notes ./dist</code>
+              <button class="copy" type="button" data-copy="spot deploy project-notes ./dist">Copy</button>
+            </div>
+
+            <figure class="screen">
+              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-url">spot.example.com</span></div>
+              <div class="screen-body">
+                <div class="drop-card">
+                  <div class="drop-icon" aria-hidden="true">↥</div>
+                  <strong>Drop a folder here</strong>
+                  <p>or click to choose · index.html required</p>
+                </div>
+              </div>
+              <figcaption><span class="caption-tag">Browser route</span><span>Drop once for a quick share. Use the CLI when the folder is built by your project.</span></figcaption>
+            </figure>
+
+            <aside class="agent-guide" aria-labelledby="agent-guide-title">
+              <div class="agent-guide-head">
+                <span class="callout-mark" aria-hidden="true">⌁</span>
+                <div>
+                  <h3 id="agent-guide-title">Running with an agent?</h3>
+                  <p>Give it this one instruction. The setup guide covers installing the CLI, running <code>spot init</code>, and using Spot’s SDK guidance before deploying.</p>
+                </div>
+              </div>
+              <div class="command agent-command" aria-label="Agent setup instruction">
+                <code id="agent-command"></code>
+                <button class="copy" type="button" data-copy="" data-agent-copy>Copy</button>
+              </div>
+              <a class="agent-link" href="/agent.md">Open the full agent setup →</a>
+            </aside>
+          </section>
+
+          <section class="chapter" id="share" aria-labelledby="share-title">
+            <div class="chapter-head">
+              <span class="chapter-number">02</span>
+              <div>
+                <p class="section-kicker">Pick the audience</p>
+                <h2 id="share-title">One spot, two doors.</h2>
+                <p class="chapter-intro">The mesh address is the default, private workplace link. When a site needs to travel farther, publish a separate internet address—without changing the mesh version.</p>
+              </div>
+            </div>
+
+            <div class="access-grid">
+              <article class="access-card">
+                <div class="access-top"><span class="access-icon" aria-hidden="true">⌂</span><h3>On the mesh</h3></div>
+                <p>Fast, internal, and available only to people who can reach your organization’s private network.</p>
+                <div class="choice"><span class="choice-dot"></span>Everyone on the mesh</div>
+                <div class="choice"><span class="choice-dot"></span>Invited emails only</div>
+              </article>
+              <article class="access-card internet">
+                <div class="access-top"><span class="access-icon" aria-hidden="true">↗</span><h3>On the internet</h3></div>
+                <p>An optional public address for clients, friends, or anyone outside the mesh.</p>
+                <div class="choice"><span class="choice-dot"></span>Anyone with the link</div>
+                <div class="choice"><span class="choice-dot"></span>Email PIN protection</div>
+              </article>
+            </div>
+
+            <figure class="screen site-shot">
+              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-url">spot.example.com/spots</span></div>
+              <div class="screen-body">
+                <div class="fake-site">
+                  <div class="fake-site-main">
+                    <h3>project-notes</h3>
+                    <div class="chips"><span class="chip">Mesh · everyone</span><span class="chip net">Internet · anyone</span></div>
+                    <p class="fake-url">project-notes.spot.example.com</p>
+                  </div>
+                  <div class="fake-actions"><span class="fake-button">Access</span><span class="fake-button">Update</span></div>
+                </div>
+              </div>
+              <figcaption><span class="caption-tag">Look for</span><span>The chips always say both where a site is reachable and who can open it.</span></figcaption>
+            </figure>
+
+            <aside class="callout">
+              <span class="callout-mark">!</span>
+              <div><strong>Internet access is separate.</strong><p>Inviting someone to the mesh address does not grant access to the internet version. Set each audience explicitly on <a href="/spots">My spots</a>.</p></div>
+            </aside>
+          </section>
+
+          <section class="chapter" id="manage" aria-labelledby="manage-title">
+            <div class="chapter-head">
+              <span class="chapter-number">03</span>
+              <div>
+                <p class="section-kicker">The useful controls</p>
+                <h2 id="manage-title">Keep it fresh.</h2>
+                <p class="chapter-intro">Your URL is stable. Deploy the same name to replace its files, change who can open it whenever you need, and remove it when the work is done.</p>
+              </div>
+            </div>
+
+            <div class="manage-list">
+              <article class="manage-row"><span class="manage-icon" aria-hidden="true">↻</span><div><strong>Update in place</strong><span>Run the same deploy command with the same spot name.</span></div><a class="deep-link" href="#publish">Deploy help ↑</a></article>
+              <article class="manage-row"><span class="manage-icon" aria-hidden="true">◎</span><div><strong>Review every spot</strong><span>See owners, freshness, mesh access, and internet status together.</span></div><a class="deep-link" href="/spots">Open My spots →</a></article>
+              <article class="manage-row"><span class="manage-icon" aria-hidden="true">★</span><div><strong>Find shared work</strong><span>Browse public spots by title, creator, or tag and save the useful ones.</span></div><a class="deep-link" href="/gallery">Browse gallery →</a></article>
+            </div>
+          </section>
+
+          <section class="chapter" id="releases" aria-labelledby="releases-title">
+            <div class="chapter-head">
+              <span class="chapter-number">04</span>
+              <div>
+                <p class="section-kicker">Release notes</p>
+                <h2 id="releases-title">What just landed.</h2>
+                <p class="chapter-intro">The short version of what changed, why it matters, and where to try it. No archaeology through commit logs required.</p>
+              </div>
+            </div>
+
+            <article class="release">
+              <p class="mini-label release-date"><time datetime="2026-07-18">July 18, 2026</time> · Internet publishing</p>
+              <h3>Share beyond the mesh.</h3>
+              <ul>
+                <li>Publish a managed internet version from <a href="/spots">My spots</a>.</li>
+                <li>Choose an open link or restrict visitors with one-time email PINs.</li>
+                <li>See mesh and internet audiences as separate, plain-language status chips.</li>
+              </ul>
+            </article>
+            <div class="older-release"><time datetime="2026-07-13">July 13, 2026</time><span>Saved spots filter added to the gallery, so frequently used work is one tap away.</span></div>
+            <div class="older-release"><time datetime="2026-07-02">July 2, 2026</time><span>Spot Show gained a report-style template for polished, shareable visual summaries.</span></div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <section class="bottom-cta" aria-labelledby="cta-title">
+      <div class="bottom-cta-inner">
+        <div><h2 id="cta-title">Ready? Pick a folder.</h2><p>You can have a durable link before your coffee cools.</p></div>
+        <a class="cta-button" href="/">Deploy a spot →</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <nav aria-label="Spot pages"><a href="/">deploy</a> · <a href="/spots">my spots</a> · <a href="/gallery">gallery</a> · <a href="/stats">stats</a> · <a href="/help" aria-current="page">help</a></nav>
+    <div>Spot field guide · deep-link any chapter from the route above</div>
+  </footer>
+
+  <script>
+    (() => {
+      'use strict';
+      const links = [...document.querySelectorAll('.route a')];
+      const sections = links.map(link => document.querySelector(link.hash)).filter(Boolean);
+      const activate = id => links.forEach(link => link.classList.toggle('active', link.hash === '#' + id));
+
+      if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver(entries => {
+          const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (visible) activate(visible.target.id);
+        }, { rootMargin: '-20% 0px -60%', threshold: [0, .2, .5] });
+        sections.forEach(section => observer.observe(section));
+      }
+
+      const agentCommand = `Read this and follow it: ${location.origin}/agent.md`;
+      const agentCommandNode = document.getElementById('agent-command');
+      const agentCopy = document.querySelector('[data-agent-copy]');
+      if (agentCommandNode && agentCopy) {
+        agentCommandNode.textContent = agentCommand;
+        agentCopy.dataset.copy = agentCommand;
+      }
+
+      document.querySelectorAll('[data-copy]').forEach(button => {
+        button.addEventListener('click', async () => {
+          try {
+            if (navigator.clipboard && window.isSecureContext) {
+              await navigator.clipboard.writeText(button.dataset.copy);
+            } else {
+              throw new Error('clipboard unavailable');
+            }
+          } catch {
+            const field = document.createElement('textarea');
+            field.value = button.dataset.copy;
+            field.setAttribute('readonly', '');
+            field.style.position = 'fixed';
+            field.style.left = '-9999px';
+            document.body.appendChild(field);
+            field.select();
+            document.execCommand('copy');
+            field.remove();
+          } finally {
+            button.textContent = 'Copied';
+            window.setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

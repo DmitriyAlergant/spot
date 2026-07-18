@@ -165,6 +165,7 @@ func TestStaticServerServesApexAndSiteFiles(t *testing.T) {
 		path string
 		want string
 	}{
+		{"/help", "The five-minute field guide"},
 		{"/install.sh", "Install the Spot CLI"},
 		{"/agent.md", "Spot Agent Setup"},
 		{"/spot-agent-howto.md", "Spot — agent how-to"},
