@@ -349,6 +349,9 @@
       height: 20px;
       flex: 0 0 auto;
     }
+    /* The lock only appears once the audience is actually restricted —
+       a lock next to "everyone" reads as a contradiction. */
+    .access-trigger:not(.restricted) svg { display: none; }
     .access-popover[hidden] { display: none; }
     .access-popover {
       position: absolute;
@@ -820,14 +823,14 @@
             <rect width="14" height="10" x="5" y="11" rx="2"/>
             <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
           </svg>
-          <span id="access-status">Public</span>
+          <span id="access-status">Mesh · everyone</span>
         </button>
         <section class="access-popover" id="access-popover" role="dialog"
                  aria-labelledby="access-title" hidden>
           <div class="access-head">
             <div>
-              <p class="access-kicker">Access</p>
-              <p class="access-title" id="access-title">Public unless you add users</p>
+              <p class="access-kicker">Mesh access</p>
+              <p class="access-title" id="access-title">Everyone on the mesh unless you invite specific people</p>
             </div>
             <button class="access-clear" id="access-clear" type="button">Clear</button>
           </div>
@@ -1233,14 +1236,14 @@
       const renderAccess = () => {
         const count = selectedAccess.length;
         if (count === 0) {
-          accessStatus.textContent = 'Public';
+          accessStatus.textContent = 'Mesh · everyone';
           accessNote.textContent = accessFileWarning || 'No _access.json will be deployed.';
         } else if (count === 1) {
-          accessStatus.textContent = 'Locked';
-          accessNote.textContent = 'Deploys _access.json for ' + selectedAccess[0].label + '.';
+          accessStatus.textContent = 'Mesh · 1 invited';
+          accessNote.textContent = 'Only ' + selectedAccess[0].label + ' can open it on the mesh. Deploys _access.json.';
         } else {
-          accessStatus.textContent = count + ' selected';
-          accessNote.textContent = 'Deploys _access.json for selected users.';
+          accessStatus.textContent = 'Mesh · ' + count + ' invited';
+          accessNote.textContent = 'Only these ' + count + ' people can open it on the mesh. Deploys _access.json.';
         }
         accessOpen.classList.toggle('restricted', count > 0);
         renderAccessResults();

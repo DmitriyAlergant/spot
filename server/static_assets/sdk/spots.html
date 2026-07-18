@@ -23,6 +23,8 @@
       --paper: #fff7d6;
       --saved: #ff9f1c;
       --saved-soft: #ffe6a3;
+      --mesh: #d9f4e1;
+      --net: #ffe3c2;
       --font-logo: 'Pacifico', 'Brush Script MT', cursive;
       --font-mono: 'Space Mono', ui-monospace, 'SF Mono', monospace;
     }
@@ -204,7 +206,13 @@
       letter-spacing: .02em;
       overflow-wrap: anywhere;
     }
+    /* Access chips always name a surface·audience pair: "Mesh · everyone",
+       "🔒 Mesh · 4 invited", "Internet · anyone", "🔐 Internet · PIN".
+       Mint = mesh, amber = internet, filled = a restricted audience. */
     .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       border: 2px solid var(--ink);
       border-radius: 999px;
       padding: 6px 11px;
@@ -213,8 +221,19 @@
       text-transform: uppercase;
       white-space: nowrap;
     }
-    .badge.public { background: #d9f4e1; }
-    .badge.locked { background: var(--accent); color: #fff; }
+    .sitechips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 12px 0 0;
+    }
+    .badge .who { opacity: .72; }
+    .badge.mesh { background: var(--mesh); }
+    .badge.mesh.invited { background: var(--accent); color: #fff; }
+    .badge.mesh.invited .who { opacity: .85; }
+    .badge.net { background: var(--net); }
+    .badge.net.pin { background: var(--ink); color: var(--paper); }
+    .badge.net.pin .who { opacity: .85; }
 
     .siteurl {
       display: inline-block;
@@ -798,6 +817,9 @@
       gap: 12px;
       margin-top: 24px;
     }
+    /* Unpublish sits apart from cancel/submit — it leaves the internet,
+       not the dialog. */
+    .publish-dialog-actions .btn-delete { margin-right: auto; }
 
     /* ─── responsive ──────────────────────────────────────────── */
     @media (max-width: 720px) {
@@ -842,7 +864,7 @@
     <section id="view-gallery" aria-labelledby="gallery-title" hidden>
       <div class="pagehead">
         <h1 class="title" id="gallery-title" data-text="Gallery">Gallery</h1>
-        <p class="sub">Every public spot on the mesh</p>
+        <p class="sub">Every spot open to the whole mesh</p>
       </div>
       <div class="toolbar">
         <label class="searchbox" for="search">
@@ -890,18 +912,18 @@
 
   <dialog class="publish-dialog" id="cf-publish-dialog" aria-labelledby="cf-publish-title">
     <form class="publish-form" id="cf-publish-form">
-      <h2 id="cf-publish-title">Publish an internet version</h2>
-      <p class="publish-intro">Choose who can open the internet-facing copy. This is separate from access inside Spot.</p>
+      <h2 id="cf-publish-title">Publish to the internet</h2>
+      <p class="publish-intro" id="cf-publish-intro">Choose who can open the internet version. This is separate from who can open it on the mesh.</p>
       <div class="visibility-options">
         <label class="visibility-option">
           <input type="radio" name="cf-visibility" value="public" checked>
-          <strong>Public</strong>
-          <span>Anyone with the link can visit.</span>
+          <strong>Anyone with the link</strong>
+          <span>Open to the whole internet. No sign-in of any kind.</span>
         </label>
         <label class="visibility-option">
           <input type="radio" name="cf-visibility" value="restricted">
-          <strong>Email restricted</strong>
-          <span>Approved visitors receive a one-time PIN by email.</span>
+          <strong>PIN by email</strong>
+          <span>Only the addresses you list; each visitor gets a one-time PIN by email.</span>
         </label>
       </div>
       <div class="email-panel" id="cf-email-panel" hidden>
@@ -910,8 +932,9 @@
                   placeholder="friend@example.com&#10;teammate@example.org"></textarea>
         <p class="publish-help">One per line, or separate addresses with commas. Up to 100 exact addresses.</p>
       </div>
-      <p class="publish-help" id="cf-access-unavailable" hidden>Email-restricted publishing needs one-time PIN configuration.</p>
+      <p class="publish-help" id="cf-access-unavailable" hidden>PIN by email is unavailable until one-time PIN delivery is configured.</p>
       <div class="publish-dialog-actions">
+        <button class="btn btn-delete" type="button" id="cf-publish-unpublish" hidden>Unpublish</button>
         <button class="btn" type="button" id="cf-publish-cancel">Cancel</button>
         <button class="btn btn-open" type="submit" id="cf-publish-submit">Publish</button>
       </div>
@@ -1099,6 +1122,8 @@
         if (!armed) return;
         armed.button.classList.remove('arming');
         armed.button.textContent = 'Delete';
+        armed.button.style.width = '';
+        armed.button.removeAttribute('title');
         clearTimeout(armed.timer);
         armed = null;
       };
@@ -1167,7 +1192,7 @@
         const visibility = publishForm.elements['cf-visibility'].value;
         publishEmailPanel.hidden = visibility !== 'restricted';
         publishEmails.required = visibility === 'restricted';
-        publishSubmit.textContent = visibility === 'restricted' ? 'Publish restricted' : 'Publish public';
+        publishSubmit.textContent = 'Publish';
         publishSubmit.disabled = visibility === 'restricted' && restrictedOption.disabled;
       };
 
@@ -1175,6 +1200,12 @@
         option.addEventListener('change', syncCloudflarePublishForm);
       }
       $('cf-publish-cancel').addEventListener('click', () => publishDialog.close());
+      $('cf-publish-unpublish').addEventListener('click', () => {
+        if (!pendingCloudflarePublish) return;
+        const { site, button } = pendingCloudflarePublish;
+        publishDialog.close();
+        unpublishCloudflare(site, button);
+      });
       publishDialog.addEventListener('close', () => { pendingCloudflarePublish = null; });
 
       const openCloudflarePublish = (site, button) => {
@@ -1186,9 +1217,13 @@
 		publishEmails.value = (publication.requested_access_emails || publication.access_emails || []).join('\n');
         restrictedOption.disabled = !cf.access_enabled;
         $('cf-access-unavailable').hidden = cf.access_enabled;
+        $('cf-publish-unpublish').hidden = !cf.publication;
         $('cf-publish-title').textContent = publication.status === 'published'
           ? 'Internet settings for ' + site.name
-          : 'Publish an internet version of ' + site.name;
+          : 'Publish ' + site.name + ' to the internet';
+        $('cf-publish-intro').textContent =
+          'Choose who can open the internet version. This is separate from who can open it on the mesh (currently: ' +
+          (site.restricted ? site.allow_count + ' invited' : 'everyone') + ').';
         pendingCloudflarePublish = { site, button };
         syncCloudflarePublishForm();
         publishDialog.showModal();
@@ -1214,6 +1249,7 @@
       });
 
       const unpublishCloudflare = async (site, button) => {
+        const prior = button.textContent;
         button.disabled = true;
         button.textContent = 'Unpublishing…';
         try {
@@ -1222,7 +1258,7 @@
           toast('Internet version unpublished');
         } catch (err) {
           button.disabled = false;
-          button.textContent = 'Unpublish';
+          button.textContent = prior;
           toast(internetPublishingError(err.message));
         }
       };
@@ -1315,14 +1351,17 @@
 	  };
 
       const deleteSite = async (site, row, button) => {
+        const width = button.offsetWidth;
         disarm();
+        button.style.width = width + 'px';
         button.disabled = true;
-        button.textContent = 'Deleting…';
+        button.textContent = 'Poof…';
         try {
           await api('/api/sites/' + encodeURIComponent(site.name), { method: 'DELETE' });
         } catch (err) {
           button.disabled = false;
           button.textContent = 'Delete';
+          button.style.width = '';
           toast(err.message);
           return;
         }
@@ -1361,10 +1400,29 @@
           const name = document.createElement('h2');
           name.className = 'sitename';
           name.textContent = site.name;
+          const cf = site.cloudflare || {};
+          head.append(name);
+          // Chips get their own row so placement never depends on how much
+          // of the title row happens to be left over.
+          const chips = document.createElement('div');
+          chips.className = 'sitechips';
           const badge = document.createElement('span');
-          badge.className = 'badge ' + (site.restricted ? 'locked' : 'public');
-          badge.textContent = site.restricted ? '🔒 locked · ' + site.allow_count : 'public';
-          head.append(name, badge);
+          badge.className = 'badge mesh' + (site.restricted ? ' invited' : '');
+          const meshWho = document.createElement('span');
+          meshWho.className = 'who';
+          meshWho.textContent = site.restricted ? '· ' + site.allow_count + ' invited' : '· everyone';
+          badge.append(site.restricted ? '🔒 Mesh ' : 'Mesh ', meshWho);
+          chips.append(badge);
+          if (cf.publication && cf.publication.status === 'published') {
+            const pin = cf.publication.access_mode === 'restricted';
+            const netBadge = document.createElement('span');
+            netBadge.className = 'badge net' + (pin ? ' pin' : '');
+            const netWho = document.createElement('span');
+            netWho.className = 'who';
+            netWho.textContent = pin ? '· PIN' : '· anyone';
+            netBadge.append(pin ? '🔐 Internet ' : 'Internet ', netWho);
+            chips.append(netBadge);
+          }
 
           const url = document.createElement('a');
           url.className = 'siteurl';
@@ -1382,10 +1440,9 @@
           slots[2].textContent = dateLabel(site.created_at);
           slots[3].textContent = rel(site.updated_at);
 
-          info.append(head, url, meta);
+          info.append(head, chips, url, meta);
           if ((site.tags || []).length) info.append(tagList(site.tags));
 
-          const cf = site.cloudflare || {};
           if (cf.enabled || cf.publication) {
             const cfmeta = document.createElement('p');
             cfmeta.className = 'cfmeta';
@@ -1423,9 +1480,9 @@
               cfmeta.append(needsUpdate ? 'Internet version needs update: ' : 'Internet version: ', link);
               if (cf.publication.access_mode === 'restricted') {
                 const count = (cf.publication.access_emails || []).length;
-                cfmeta.append(' · restricted to ' + count + ' email' + (count === 1 ? '' : 's'));
+                cfmeta.append(' · PIN by email · ' + count + ' ' + (count === 1 ? 'person' : 'people'));
               } else {
-                cfmeta.append(' · public');
+                cfmeta.append(' · anyone with the link');
               }
             }
             if (cfmeta.textContent || cfmeta.childNodes.length) info.append(cfmeta);
@@ -1518,8 +1575,12 @@
               return;
             }
             disarm();
+            // Freeze the button's width before swapping the label so arming
+            // never reflows the row — the armed copy must fit that width.
+            del.style.width = del.offsetWidth + 'px';
             del.classList.add('arming');
-            del.textContent = 'Sure? Click again';
+            del.textContent = 'Sure?';
+            del.title = 'Click again to delete';
             armed = { button: del, timer: setTimeout(disarm, 4000) };
           });
 
@@ -1530,7 +1591,10 @@
 			if (hasUncertainAccessCreate(site)) actions.append(cfResolveAccess);
 			if (hasUncertainProjectState(site)) actions.append(cfResolveProject);
 			if (cf.publication && cf.publication.cleanup_unknown) actions.append(cfResolveLegacy);
-            if (cf.publication) actions.append(cfUnpublish);
+            // Unpublish normally lives inside the Internet… dialog; it only
+            // returns to the row when the dialog is unreachable (the publish
+            // button is disabled for an ineligible site).
+            if (cf.publication && cf.eligibility && cf.eligibility.eligible === false) actions.append(cfUnpublish);
           } else if (cf.publication && !cf.publication.cleanup_unknown && cf.publication.project_managed === false && cf.publication.dns_managed === false && cf.publication.access_managed === false) {
             actions.append(cfUnpublish);
           } else if (cf.publication) {
