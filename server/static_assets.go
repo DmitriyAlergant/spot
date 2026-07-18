@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 )
 
 //go:generate sh -c "rm -rf static_assets/sdk && mkdir -p static_assets/sdk && cp ../sdk/index.html ../sdk/spots.html ../sdk/stats.html ../sdk/404.html ../sdk/spot.js ../sdk/spot-live.js ../sdk/spot.d.ts ../sdk/install.sh ../sdk/agent.md ../sdk/spot-agent-howto.md ../sdk/spot-show-schema.md ../sdk/spot static_assets/sdk/"
@@ -40,7 +41,27 @@ func (s *Server) handleApexStatic(w http.ResponseWriter, r *http.Request) {
 	if name == "." || name == "" {
 		name = "index.html"
 	}
+	if name == "agent.md" {
+		s.serveAgentDoc(w, r)
+		return
+	}
 	s.serveEmbeddedAsset(w, r, name)
+}
+
+// agentDocPlaceholderOrigin is the origin used in the checked-in sdk/agent.md;
+// serveAgentDoc swaps it for the origin the request actually came through.
+const agentDocPlaceholderOrigin = "https://spot.corp.example.com"
+
+func (s *Server) serveAgentDoc(w http.ResponseWriter, r *http.Request) {
+	raw, err := staticAssets.ReadFile("static_assets/sdk/agent.md")
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not read platform asset")
+		return
+	}
+	origin := s.requestScheme(r) + "://" + s.requestHost(r)
+	doc := strings.ReplaceAll(string(raw), agentDocPlaceholderOrigin, origin)
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	http.ServeContent(w, r, "agent.md", time.Time{}, strings.NewReader(doc))
 }
 
 func (s *Server) handleSiteStatic(w http.ResponseWriter, r *http.Request, site string) {

@@ -179,6 +179,16 @@ func TestStaticServerServesApexAndSiteFiles(t *testing.T) {
 		}
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "https://spot.localhost/agent.md", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("https://spot.localhost/install.sh")) {
+		t.Fatalf("agent.md origin rewrite = %d body %q", rec.Code, rec.Body.String()[:min(200, rec.Body.Len())])
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("spot.corp.example.com")) {
+		t.Fatalf("agent.md still contains placeholder origin: %q", rec.Body.String())
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "https://demo.spot.localhost/", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -688,6 +688,10 @@
       transform: translate(-1px, -1px);
       box-shadow: 5px 6px 0 var(--ink);
     }
+    .copy-block {
+      width: 100%;
+      min-height: 50px;
+    }
     .note {
       margin: 12px 0 0;
       font: 400 12px/1.7 var(--font-mono);
@@ -906,6 +910,11 @@
           </div>
           <p class="note">That page tells the agent to install the CLI, run <code>spot init</code>, and use the Spot SDK skill for deploys.</p>
         </div>
+        <div class="step">
+          <p class="step-label">Agent refuses to fetch links?</p>
+          <button type="button" class="copy copy-block" id="agent-expanded-copy">Copy full instructions</button>
+          <p class="note">Copies the same prompt with the <code>agent.md</code> content pasted in, so the agent never has to fetch a URL.</p>
+        </div>
       </section>
     </div>
   </div>
@@ -976,7 +985,7 @@
         document.execCommand('copy');
         field.remove();
       };
-      for (const button of document.querySelectorAll('.copy')) {
+      for (const button of document.querySelectorAll('.copy[data-copy]')) {
         const label = button.textContent;
         button.addEventListener('click', async () => {
           await copyText($(button.dataset.copy).textContent);
@@ -984,6 +993,21 @@
           setTimeout(() => { button.textContent = label; }, 1400);
         });
       }
+
+      const expandedCopy = $('agent-expanded-copy');
+      const expandedLabel = expandedCopy.textContent;
+      expandedCopy.addEventListener('click', async () => {
+        try {
+          const res = await fetch('/agent.md');
+          if (!res.ok) throw new Error('agent.md: ' + res.status);
+          const doc = await res.text();
+          await copyText('Read this and follow it:\n\n' + doc);
+          expandedCopy.textContent = 'Copied';
+        } catch {
+          expandedCopy.textContent = 'Failed';
+        }
+        setTimeout(() => { expandedCopy.textContent = expandedLabel; }, 1400);
+      });
 
       let picked = [];        // [{ path, file }], paths site-relative
       let identity = null;
