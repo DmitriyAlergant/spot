@@ -30,6 +30,10 @@ const (
 	cloudflareConfigEnabled  = "enabled"
 
 	defaultCloudflareProjectPrefix = "spot-"
+	// Cloudflare's project-name schema reserves room for generated hostname
+	// suffixes, so it is stricter than the 63-byte DNS-label limit Spot uses.
+	maxCloudflareProjectNameLength = 58
+	cloudflareProjectHashLength    = 12
 	maxCloudflareFileSize          = 25 << 20
 	maxCloudflareFiles             = 20_000
 	// Match Wrangler's conservative pre-base64 upload bucket size.
@@ -117,7 +121,45 @@ func (c cloudflareConfig) Hostname(site string) string {
 }
 
 func (c cloudflareConfig) ProjectName(site string) string {
-	return c.ProjectPrefix + site
+	return cloudflareProjectName(c.ProjectPrefix + site)
+}
+
+// cloudflareProjectName preserves readable names when they already satisfy
+// Cloudflare's schema. Longer names retain a readable prefix and gain a stable
+// hash suffix so every valid Spot site name remains publishable without
+// collisions caused by truncation. Normalizing the optional operator-supplied
+// prefix also prevents provider-side failures from invalid punctuation or case.
+func cloudflareProjectName(raw string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(raw))
+	separator := false
+	for _, r := range strings.ToLower(raw) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			if separator && normalized.Len() > 0 {
+				normalized.WriteByte('-')
+			}
+			normalized.WriteRune(r)
+			separator = false
+		case r == '-':
+			separator = normalized.Len() > 0
+		default:
+			separator = normalized.Len() > 0
+		}
+	}
+
+	name := normalized.String()
+	if name == "" {
+		name = "spot"
+	}
+	if len(name) <= maxCloudflareProjectNameLength {
+		return name
+	}
+
+	digest := sha256.Sum256([]byte(name))
+	suffix := "-" + hex.EncodeToString(digest[:])[:cloudflareProjectHashLength]
+	head := strings.TrimRight(name[:maxCloudflareProjectNameLength-len(suffix)], "-")
+	return head + suffix
 }
 
 type cloudflarePublication struct {
