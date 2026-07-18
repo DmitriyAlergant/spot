@@ -472,19 +472,34 @@ room.send('cursor', { x: 12, y: 8 });
 
 ## Access Control
 
-Sites are open to everyone who can reach Spot by default. A site restricts
-itself by shipping `_access.json` at its root:
+Sites are open to everyone who can reach Spot by default. A site controls
+visitor access and delegated management by shipping `_access.json` at its root:
 
 ```json
-{ "allow": ["alice@example.com", "team-payments"] }
+{
+  "allow": ["alice@example.com", "team-payments"],
+  "maintainers": ["bob@example.com", "team-platform"]
+}
 ```
 
 Entries containing `@` match email. Other entries match mesh groups. A
-broken policy fails closed.
+broken policy fails closed. `allow` and `maintainers` are independent: a
+maintainer can deploy, delete, and manage Cloudflare for an active site but
+cannot visit a restricted site unless `allow` also matches them.
 
-The first deploy claims a site name. Later deploys and deletes require
-the original owner or a platform admin from `SPOT_ADMIN_EMAILS` or
-`SPOT_ADMIN_GROUPS`.
+The first deploy claims a site name for an immutable original owner. Later
+deploys, active-site deletes, Cloudflare operations, and owner-mode AI or Slack
+may be performed by that owner, a platform admin from `SPOT_ADMIN_EMAILS` or
+`SPOT_ADMIN_GROUPS`, or a current email/group maintainer. Maintainers may change
+the maintainer list through a later authorized deploy, including removing
+themselves.
+
+If a maintainer deletes a site, Spot purges its content and dependent data but
+keeps a recovery tombstone for the original owner. Only that owner or a
+platform admin can redeploy the reserved name or release it permanently. This
+prevents delegated deletion from becoming ownership transfer. `/spots` shows
+active sites to every authorized manager and shows recovery tombstones only to
+their owner or a platform admin.
 
 In `single-user` mode, every visitor has the same configured identity.
 Ownership still works, but `_access.json` cannot provide per-person
@@ -514,13 +529,16 @@ Restricted sites are not auto-tagged.
 ## Platform Pages
 
 - `/` is the browser deployer.
-- `/spots` lists the caller's sites.
+- `/spots` lists sites the caller can manage, including delegated sites and
+  owner/admin recovery tombstones.
 - `/gallery` lists unrestricted public sites.
 
 Important APIs:
 
 - `POST /api/deploy` deploys a site from the apex only.
 - `GET /api/sites/mine` lists the caller's sites.
+- `GET /api/sites/manageable` lists sites the caller can manage and includes
+  `management_role`, immutable owner attribution, and lifecycle state.
 - `GET /api/sites/public` lists unrestricted sites.
 - `GET /api/sites/{name}/cloudflare` returns optional Cloudflare Pages
   publication status.
@@ -529,17 +547,18 @@ Important APIs:
   or `{"visibility":"restricted","emails":["friend@example.com"]}`.
 - `POST /api/sites/{name}/cloudflare/access/resolve` recovers an Access create
   whose network outcome is uncertain. `{"confirm_absent":true}` may clear the
-  attempt only after the owner has verified in Cloudflare that the named Spot
-  application is absent; a matching application is adopted instead.
+  attempt only after an authorized manager has verified in Cloudflare that the
+  named Spot application is absent; a matching application is adopted instead.
 - `POST /api/sites/{name}/cloudflare/project/resolve` reconciles an uncertain
-  Pages create after the owner verifies the project as `owned`, `unmanaged`, or
-  `absent` in Cloudflare.
+  Pages create after an authorized manager verifies the project as `owned`,
+  `unmanaged`, or `absent` in Cloudflare.
 - `POST /api/sites/{name}/cloudflare/legacy/resolve` clears an upgraded legacy
   row after `{"confirm_resources_removed":true}` confirms its external Pages,
   DNS, and Access resources were removed manually.
 - `DELETE /api/sites/{name}/cloudflare` unpublishes it from Cloudflare.
-- `DELETE /api/sites/{name}` deletes a site, its uploads, private docs,
-  and registry claim.
+- `DELETE /api/sites/{name}` purges a site's files, uploads, and private docs.
+  Owner/admin deletion releases the registry claim; maintainer deletion leaves
+  an owner-recoverable tombstone.
 - `GET /api/download` on a site subdomain downloads a source ZIP,
   unless the site disables downloads.
 
@@ -547,13 +566,17 @@ On the Spot root, the SDK wraps the site APIs:
 
 ```js
 const mine = await spot.sites.mine();
+const manageable = await spot.sites.manageable();
 const publicSites = await spot.sites.public();
 await spot.sites.delete('old-demo');
 ```
 
+`mine()` remains the ownership-only compatibility view. Platform management UI
+and new integrations should normally use `manageable()`.
+
 ## Optional Cloudflare Pages Publishing
 
-Spot can publish eligible owner-managed sites from `/spots` to Cloudflare
+Spot can publish eligible manager-authorized sites from `/spots` to Cloudflare
 Pages at:
 
 ```text
@@ -575,9 +598,9 @@ Cloudflare Pages Direct Upload limit available on every plan.
 Cloudflare publication access is separate from Spot's private mesh.
 `_access.json` continues to control only the internal Spot copy and is never
 translated into a Cloudflare policy or uploaded to Pages. Changes to it do not
-make the Cloudflare copy stale. At publish time, the owner chooses either
-public access or an exact email allowlist. Restricted copies use Cloudflare
-Access email one-time PINs and protect the custom hostname, production
+make the Cloudflare copy stale. At publish time, an authorized manager chooses
+either public access or an exact email allowlist. Restricted copies use
+Cloudflare Access email one-time PINs and protect the custom hostname, production
 `<project>.pages.dev`, and wildcard preview hostnames.
 
 Configure it:
@@ -697,7 +720,8 @@ through `/v1/images/generations`. Image responses include browser-ready
 as `{ model: 'gpt-image-2' }` or the LiteLLM Nano Banana 2 alias exposed by
 your gateway.
 
-By default only the site owner and platform admins may call it. Set
+By default only site managers (owner, platform admin, or `_access.json`
+maintainer) may call it after passing normal visitor access. Set
 `SPOT_AI_ACCESS=visitors` globally, or opt in a restricted site:
 
 ```json
@@ -720,8 +744,9 @@ await spot.slack.send({
 ```
 
 Set `SLACK_BASE_URL` only when routing to a compatible test or proxy upstream.
-By default only the site owner and platform admins may send Slack messages.
-Set `SPOT_SLACK_ACCESS=visitors` globally, or opt in a restricted site:
+By default only site managers (owner, platform admin, or `_access.json`
+maintainer) may send Slack messages after passing normal visitor access. Set
+`SPOT_SLACK_ACCESS=visitors` globally, or opt in a restricted site:
 
 ```json
 { "allow": ["team-payments"], "slack": "visitors" }

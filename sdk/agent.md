@@ -35,5 +35,7 @@ spot show-schema
 curl -fsSL https://spot.corp.example.com/spot-show-schema.md
 ```
 
-The fetched how-to covers the intended workflow, when to use Spot Show versus a custom site, supported block kinds, feedback iteration, and safety notes.
+The fetched how-to covers the intended workflow, when to use Spot Show versus
+a custom site, supported block kinds, feedback iteration, site access and
+maintainer delegation, and safety notes.
 The schema document defines the required JSON shape for cards and blocks.

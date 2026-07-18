@@ -179,6 +179,9 @@ declare namespace SpotSDK {
     title?: string;
     description?: string;
     tags?: string[];
+    owner?: string;
+    management_role?: 'owner' | 'admin' | 'maintainer';
+    state?: 'provisioning' | 'active' | 'deleted';
     [key: string]: unknown;
   }
 

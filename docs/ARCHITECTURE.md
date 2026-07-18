@@ -62,12 +62,15 @@ Startup flow:
 5. Site and file storage are wired:
    - `SiteStore` and `FileStore` for S3-compatible storage.
    - `LocalSiteStore` and `LocalFileStore` for filesystem storage.
-6. Optional `AIProxy` is created when `OPENAI_API_KEY` is set.
-7. Optional Cloudflare Pages publishing is enabled only when all
+6. One storage-backed policy resolver is created in local and S3 modes. It
+   coalesces concurrent `_access.json` reads and caches parsed policies,
+   missing files, failures, and exact-byte digests for a short bounded TTL.
+7. Optional `AIProxy` is created when `OPENAI_API_KEY` is set.
+8. Optional Cloudflare Pages publishing is enabled only when all
    `SPOT_CLOUDFLARE_*` runtime variables are present. Missing variables disable
    it without failing startup; partial config is logged and reported by status
    APIs as `partial`.
-8. `Server.routes()` builds the HTTP mux and wraps it with forwarded-header and
+9. `Server.routes()` builds the HTTP mux and wraps it with forwarded-header and
    host validation.
 
 Most code remains in package `main`. Prefer extending the existing narrow
@@ -142,15 +145,17 @@ Tables:
   Each row also records an `owner` (the creator's identity key) so a site
   can keep per-visitor data and filter to `list({ mine: true })`. The column
   is added to existing databases by an idempotent migration in `server/db.go`.
-- `sites`: site ownership records plus durable content-dirty, generation, and
-  external-mutation state. Deploy authorization claims a generation before
-  storage can change, and a successful audit clears the marker only if that
-  generation is still current and no out-of-process backfill is active. This
-  prevents interrupted, unaudited, or interleaved mutations from making an old
-  content hash look current. Backfill uses an exclusive owner-token lease;
-  only its holder can close it, and an invocation can recover a lease left
-  stale for an hour by a killed process.
-- `site_deploy_audit`: deploy and delete audit history.
+- `sites`: immutable original ownership, lifecycle (`provisioning`, `active`,
+  or `deleted`), durable policy-transition hashes, and content-dirty,
+  generation, and external-mutation state. Deploy authorization claims a
+  generation before storage can change, and a successful audit clears the
+  marker only if that generation is still current and no out-of-process
+  mutation is active. This prevents interrupted, unaudited, or interleaved
+  mutations from making an old content hash look current. Backfill uses an
+  exclusive owner-token lease; only its holder can close it, and an invocation
+  can recover a lease left stale for an hour by a killed process.
+- `site_deploy_audit`: deploy and delete audit history, including whether the
+  actor was authorized as owner, platform admin, or maintainer.
 - `site_cloudflare_publications`: optional Cloudflare Pages publication
   metadata, including account/zone ownership, explicit project/DNS cleanup
   ownership, managed DNS record identity, project name, hostname, latest
@@ -163,9 +168,11 @@ site scope when a site is deleted.
 The site registry is implemented in `server/site_registry.go`. It owns:
 
 - first-deploy site claims,
-- owner/admin redeploy authorization,
-- site listing for the platform UI,
-- delete authorization,
+- lifecycle and content-generation transitions,
+- role-bearing owner/admin/maintainer authorization,
+- ownership-only and manageable site listings for the platform UI,
+- role-sensitive delete and recovery authorization,
+- durable policy-transition fences and reconciliation metadata,
 - deploy audit writes.
 
 There is no migration framework. Schema changes should be additive and
@@ -200,11 +207,13 @@ Deploy and upload storage are intentionally separate:
 - Uploads are user-generated files addressed by random IDs under
   `/api/files/<site>/<id>/<name>`.
 
-Deleting a site purges deployed files, uploads, and private document scope
-before freeing the site registry row. If a Cloudflare publication row exists,
-the site delete API returns `409 Conflict`; the owner or a platform admin must
-unpublish first so the public Cloudflare copy, custom domain, and DNS record are
-removed deliberately.
+Deleting a site purges deployed files, uploads, and private document scope. An
+owner or platform admin also frees the registry row. A maintainer delete keeps
+an empty `deleted` tombstone tied to the immutable owner; only that owner or an
+admin can recreate the site or permanently release the name. If a Cloudflare
+publication row exists, deletion returns `409 Conflict`; any authorized active-
+site manager must unpublish first so the public copy, custom domain, and DNS
+record are removed deliberately.
 
 ## Deploy Flow
 
@@ -227,8 +236,16 @@ Deploy invariants:
 - New files are written before stale files are removed, so a storage failure
   mid-deploy leaves the previous content intact rather than half-applied.
 - A per-site mutex prevents concurrent mutations of the same site.
-- The first successful deploy claims the site for the actor.
-- Later deploys require the same owner or a configured platform admin.
+- A missing name is atomically claimed as `provisioning`; only a successfully
+  completed deploy activates the site and its stored maintainer policy.
+- Active-site deploys require the immutable owner, a configured platform admin,
+  or an email/group matched by the currently stored `maintainers` policy. The
+  incoming policy never authorizes its own request.
+- Deleted names may be recreated only by their original owner or an admin.
+- Visitor-restricting changes stage a deny-all policy before ordinary content
+  mutation. Authorization-sensitive policy writes use durable previous/next
+  hashes; ambiguous storage outcomes fence site traffic and maintainer-derived
+  management until reconciliation or owner/admin repair.
 - Sync semantics are used: uploaded files replace the site, and stale files are
   removed.
 - Deploy audit rows are recorded for success, failure, and denied attempts.
@@ -249,16 +266,17 @@ Cloudflare publishing is implemented in `server/cloudflare.go` and exposed from
 - `POST /api/sites/{name}/cloudflare/legacy/resolve`
 - `DELETE /api/sites/{name}/cloudflare`
 
-Each route uses `SiteManager.CanManageSite`, so site owners can publish their
-own sites and platform admins can publish any manageable site. Deployed site
-subdomains cannot call these endpoints because the existing sites API apex
-guard rejects them.
+Each route uses the shared role-bearing management decision, so an active
+site's owner, platform admins, and current maintainers can manage publication.
+Deployed site subdomains cannot call these endpoints because the existing sites
+API apex guard rejects them.
 
 The publish flow:
 
 1. Take the per-site Cloudflare-operation lock, then the site mutation lock.
-2. Recheck ownership, snapshot current `SiteStorage` files into memory, and
-   validate eligibility server-side. `_access.json` is omitted from the export
+2. Recheck management authorization and lifecycle, snapshot current
+   `SiteStorage` files into memory, and validate eligibility server-side.
+   `_access.json` is omitted from the export
    and its bytes do not participate in the Cloudflare content hash. Sites are
    rejected if they contain root `/spot.js`, Spot SDK/runtime references, same-origin
    `/api/` usage, Pages Functions or Worker files, `_routes.json`, `_headers`,
@@ -278,8 +296,8 @@ The publish flow:
    is recorded. A separate `claiming-project` marker records that successful
    response before the ownership bit changes, so a retry can finish a failed
    state write without repeating the create. An older ambiguous `creating`
-   state remains blocked until the owner verifies the project as owned,
-   unmanaged, or absent through the project-resolution route.
+   state remains blocked until an authorized manager verifies the project as
+   owned, unmanaged, or absent through the project-resolution route.
 6. For an email-restricted first publish, create one Spot-owned Cloudflare
    Access application protecting `<project>.pages.dev` and
    `*.<project>.pages.dev` before any content upload. Its inline Allow policy
@@ -319,17 +337,17 @@ shape, DNS conflict checks, and publication ownership in server code.
 An Access create with a lost response remains in `restricting` and cannot be
 repeated or forgotten based only on an eventually consistent empty list. A
 retry adopts an exact matching application when it becomes visible. If the
-create never committed, the owner can use the manual resolution route after
-checking Cloudflare Zero Trust for `Spot: <site>`; the route repeats the exact
-API lookup and either adopts the app or, with explicit absence confirmation,
-changes the marker to a normal retryable failure.
+create never committed, an authorized manager can use the manual resolution
+route after checking Cloudflare Zero Trust for `Spot: <site>`; the route repeats
+the exact API lookup and either adopts the app or, with explicit absence
+confirmation, changes the marker to a normal retryable failure.
 
 Legacy rows whose original account or zone is unavailable remain
 `cleanup_unknown`; Spot cannot safely discover or delete those resources using
-current configuration. After the owner manually removes the old Pages project,
-DNS record, and Access application, the legacy-resolution route provides an
-explicit confirmation path that deletes the local guard row and unlocks the
-site.
+current configuration. After an authorized manager manually removes the old
+Pages project, DNS record, and Access application, the legacy-resolution route
+provides an explicit confirmation path that deletes the local guard row and
+unlocks the site.
 
 ## Identity Model
 
@@ -376,7 +394,7 @@ Cross-origin boundary:
 Apex-only APIs:
 
 - Deploy: `POST /api/deploy`
-- Site listing, admin, and gallery preview: `/api/sites/*` (including
+- Site listing, management, and gallery preview: `/api/sites/*` (including
   `GET /api/sites/{name}/preview`)
 - Access suggestions: `/api/access/suggestions`
 
@@ -400,6 +418,8 @@ Site visitor access:
 - `_access.json` at the deployed site root defines an `AccessPolicy`.
 - Missing `_access.json` means the site is open to everyone who can reach Spot.
 - `allow` present means access is restricted.
+- `maintainers` grants active-site management to matching email or group
+  identities without granting visitor access.
 - Email entries match users; non-email entries match group names.
 - Empty `allow` denies everyone.
 - Invalid or unreadable policy files fail closed.
@@ -409,6 +429,14 @@ Site visitor access:
 
 Policy parsing and caching are in `server/policy.go`; storage-backed lookup is
 in `server/policy_resolve.go`.
+
+Site management is a separate capability from visitor access. The immutable
+owner wins role precedence, followed by platform admin, then maintainer. The
+shared decision gates deploy, delete, Cloudflare operations, manageable-site
+discovery, and owner-mode AI/Slack after the actor passes normal visitor access.
+Maintainer policy applies only to `active` rows. `provisioning`, `deleted`, and
+unresolved policy-transition states deny site-host traffic and maintainer-
+derived authority; owner/admin recovery paths remain available.
 
 Preserve fail-closed behavior when changing policy or identity code.
 
@@ -450,6 +478,9 @@ Realtime state is process-local:
 - Room messages and presence are transient and are not replayed after reconnect.
 
 Slow websocket consumers lose events rather than blocking fan-out.
+Deploys that narrow visitor access and site deletion advance a per-site access
+epoch and disconnect existing document and room sessions, so an already-open
+socket cannot retain access after policy revocation.
 
 ## File Uploads and Downloads
 
@@ -493,7 +524,7 @@ Access rules:
 - Requires a site subdomain.
 - Requires normal site access.
 - If `SPOT_AI_ACCESS=visitors`, any authorized visitor may use it.
-- Otherwise, only site owners/admins may use it unless the site's
+- Otherwise, only site managers may use it unless the site's
   `_access.json` opts into `ai: "visitors"`.
 - Requested models must be in the deployment's allowed model set.
 
@@ -546,7 +577,7 @@ Use this map when deciding where a change belongs:
 | Site gallery thumbnails | `server/preview.go` |
 | Site path rules or data scope rules | `server/scope.go` |
 | Deploy validation, sync, limits | `server/deploy.go` |
-| Site ownership, admin deploy rights, audit | `server/site_registry.go` |
+| Site lifecycle, management roles, policy fences, audit | `server/site_registry.go` |
 | Site listing/delete HTTP handlers | `server/sites.go` |
 | SQLite open, schema, startup | `server/db.go`, `server/schema.sql` |
 | SQLite document behavior | `server/docstore.go`, `server/schema.sql` |
@@ -580,8 +611,9 @@ Use broader tests when changing behavior across boundaries:
 - `just deploy-demo`: quick manual local deploy after `just up`.
 
 Security-sensitive changes should cover allowed and denied paths. This includes
-deploy authorization, `_access.json`, source IP handling, trusted proxies,
-same-origin checks, site deletion, uploads/downloads, AI access, and shared data
+deploy authorization, lifecycle transitions, maintainer delegation,
+`_access.json` ambiguity, source IP handling, trusted proxies, same-origin
+checks, site deletion/recovery, uploads/downloads, AI access, and shared data
 scope behavior.
 
 ## Design Constraints to Preserve
@@ -591,11 +623,15 @@ scope behavior.
 - Deployed site JavaScript must not be able to spend a visitor's identity on
   apex-only administrative APIs.
 - Invalid or unreadable `_access.json` must deny access, not open access.
+- Incoming `_access.json` must never authorize the deploy carrying it; policy
+  ambiguity must fence traffic and maintainer-derived management.
 - Site storage credentials stay server-side.
-- SQLite remains the source of truth for metadata and site ownership.
+- SQLite remains the source of truth for metadata, immutable site ownership,
+  lifecycle, and temporary policy-transition integrity state. Maintainer lists
+  remain sourced only from stored `_access.json`.
 - Site names are hostnames; keep DNS-label validation strict.
 - Normal data is site-private by default; shared data must remain explicit via
   `shared-*`.
 - Deleting a site must not let a future owner inherit old files, uploads, or
-  private documents.
+  private documents, and maintainer deletion must not transfer ownership.
 - Keep interfaces small and test local behavior at the file that owns it.

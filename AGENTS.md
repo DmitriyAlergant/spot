@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Spot is a small self-hosted hosting platform. The main Go service lives in `server/` and includes HTTP routing, identity resolution, deploy handling, SQLite metadata, storage adapters, realtime websockets, and tests. Browser-facing static assets and the client SDK live in `sdk/`; generated embedded copies are under `server/static_assets/sdk/`. The shell CLI is `cli/spot`. Deployment configuration is in `docker-compose*.yml`, `caddy/`, `scripts/`, and `justfile`. Example sites are in `examples/`.
+Spot is a small self-hosted hosting platform. The main Go service lives in `server/` and includes HTTP routing, identity resolution, deploy handling, site lifecycle and maintainer authorization, SQLite metadata, storage adapters, realtime websockets, and tests. Browser-facing static assets and the client SDK live in `sdk/`; generated embedded copies are under `server/static_assets/sdk/`. The shell CLI is `cli/spot`. Deployment configuration is in `docker-compose*.yml`, `caddy/`, `scripts/`, and `justfile`. Example sites are in `examples/`.
 
 ## Build, Test, and Development Commands
 
@@ -36,4 +36,4 @@ PRs should include a concise summary, test results, and any config or migration 
 
 ## Security & Configuration Tips
 
-Do not commit `.env` or real provider tokens. Shared deployments must use a real mesh provider or `SPOT_AUTH_MODE=single-user`; local development may use `SPOT_DEV_IDENTITY_EMAIL`. Treat `_access.json`, trusted proxy settings, and identity resolution as security boundaries.
+Do not commit `.env` or real provider tokens. Shared deployments must use a real mesh provider or `SPOT_AUTH_MODE=single-user`; local development may use `SPOT_DEV_IDENTITY_EMAIL`. Treat `_access.json`, site lifecycle and policy-transition fences, trusted proxy settings, and identity resolution as security boundaries. Visitor `allow` and management `maintainers` are independent; incoming policy must never authorize its own deploy, and maintainer deletion must preserve the immutable owner's recovery claim.

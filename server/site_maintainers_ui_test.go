@@ -58,3 +58,47 @@ func TestMaintainerUIAndSDKAssets(t *testing.T) {
 		}
 	}
 }
+
+func TestMaintainerAgentGuidanceAssets(t *testing.T) {
+	for _, path := range []string{"../sdk/agent.md", "static_assets/sdk/agent.md"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `maintainer delegation`) {
+			t.Fatalf("%s does not describe maintainer guidance", path)
+		}
+	}
+	for _, path := range []string{"../sdk/spot-agent-howto.md", "static_assets/sdk/spot-agent-howto.md"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(raw)
+		for _, want := range []string{
+			`const manageable = await spot.sites.manageable();`,
+			`"maintainers": ["bob@corp.com", "team-platform"]`,
+			`A deploy cannot grant its own actor access`,
+			`maintainer delete purges the site`,
+		} {
+			if !strings.Contains(page, want) {
+				t.Fatalf("%s does not contain %q", path, want)
+			}
+		}
+	}
+	for _, path := range []string{"../cli/spot", "../sdk/spot", "static_assets/sdk/spot"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(raw)
+		for _, want := range []string{
+			`configuring visitor access or site maintainers`,
+			`site access and maintainer delegation`,
+		} {
+			if !strings.Contains(page, want) {
+				t.Fatalf("%s does not contain %q", path, want)
+			}
+		}
+	}
+}
