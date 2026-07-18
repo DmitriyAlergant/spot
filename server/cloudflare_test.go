@@ -45,6 +45,45 @@ func TestCloudflareConfigStatus(t *testing.T) {
 	}
 }
 
+func TestCloudflareProjectNameValidation(t *testing.T) {
+	cfg := cloudflareConfig{ProjectPrefix: defaultCloudflareProjectPrefix}
+	if got := cfg.ProjectName("demo"); got != "spot-demo" {
+		t.Fatalf("short project name = %q, want spot-demo", got)
+	}
+
+	for _, siteLength := range []int{53, 54, 57, 58, 63} {
+		site := strings.Repeat("a", siteLength-1) + "b"
+		got := cfg.ProjectName(site)
+		if len(got) > maxCloudflareProjectNameLength {
+			t.Errorf("ProjectName(%d-byte site) length = %d, want <= %d: %q",
+				siteLength, len(got), maxCloudflareProjectNameLength, got)
+		}
+		if !siteNameRe.MatchString(got) {
+			t.Errorf("ProjectName(%d-byte site) = %q, want provider-safe DNS label", siteLength, got)
+		}
+		if siteLength == 53 && got != defaultCloudflareProjectPrefix+site {
+			t.Errorf("ProjectName(%d-byte site) = %q, want unchanged boundary name", siteLength, got)
+		}
+		if siteLength > 53 && got == defaultCloudflareProjectPrefix+site {
+			t.Errorf("ProjectName(%d-byte site) was not shortened", siteLength)
+		}
+	}
+
+	longA := strings.Repeat("a", 62) + "a"
+	longB := strings.Repeat("a", 62) + "b"
+	if cfg.ProjectName(longA) == cfg.ProjectName(longB) {
+		t.Fatal("distinct long site names produced the same project name")
+	}
+	if got, want := (cloudflareConfig{ProjectPrefix: " TEAM__Sites / "}).ProjectName("demo"), "team-sites-demo"; got != want {
+		t.Errorf("normalized custom prefix project name = %q, want %q", got, want)
+	}
+	oversized := cloudflareConfig{ProjectPrefix: strings.Repeat("prefix-", 12)}
+	if got := oversized.ProjectName("demo"); len(got) != maxCloudflareProjectNameLength || !siteNameRe.MatchString(got) {
+		t.Errorf("oversized custom prefix project name = %q (length %d), want valid %d-byte name",
+			got, len(got), maxCloudflareProjectNameLength)
+	}
+}
+
 func TestCloudflareEligibilityRejectsSpotRuntimeAndFunctions(t *testing.T) {
 	snap := cloudflareSnapshot{Files: []cloudflareSiteFile{
 		{Path: "index.html", Data: []byte(`<script src="/spot.js"></script><script>window.spot.db("x")</script>`)},
