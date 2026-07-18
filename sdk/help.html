@@ -204,15 +204,6 @@
       color: var(--ink);
       transition: transform .15s ease, background .15s ease;
     }
-    .route-foot {
-      margin: 16px 0 0;
-      border-top: 2px solid var(--ink);
-      padding-top: 14px;
-      color: var(--muted);
-      font-size: 10.5px;
-      line-height: 1.75;
-    }
-
     .chapter { margin-bottom: 92px; }
     .chapter:last-child { margin-bottom: 0; }
     .chapter-head {
@@ -657,7 +648,6 @@
       .route ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
       .route li + li { border-top: 0; }
       .route a { grid-template-columns: 1fr; justify-items: center; text-align: center; }
-      .route-foot { display: none; }
       .steps { grid-template-columns: 1fr; }
       .step-card { min-height: 0; }
     }
@@ -721,7 +711,6 @@
             <li><a href="#manage"><span class="route-number">03</span><span>Manage</span></a></li>
             <li><a href="#releases"><span class="route-number">04</span><span>What’s new</span></a></li>
           </ol>
-          <p class="route-foot">Each heading is a deep link. Bookmark the stop you need or send it to a teammate.</p>
         </nav>
 
         <div class="chapters">
@@ -873,7 +862,6 @@
 
   <footer>
     <nav aria-label="Spot pages"><a href="/">deploy</a> · <a href="/spots">my spots</a> · <a href="/gallery">gallery</a> · <a href="/stats">stats</a> · <a href="/help" aria-current="page">help</a></nav>
-    <div>Spot field guide · deep-link any chapter from the route above</div>
   </footer>
 
   <script>
