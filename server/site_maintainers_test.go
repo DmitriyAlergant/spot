@@ -123,6 +123,99 @@ func TestSiteMaintainerLifecycleAndRecovery(t *testing.T) {
 	}
 }
 
+func TestSiteOwnerNameUsesNetBirdPeerName(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("human name takes precedence", func(t *testing.T) {
+		db := openTestDB(t)
+		registry := NewSiteRegistry(db, nil)
+		owner := Identity{
+			Email: "owner@example.com", Name: "Site Owner",
+			PeerIP: "100.64.0.7", PeerName: "owner-laptop",
+		}
+
+		if _, err := registry.AuthorizeDeploy(ctx, "human-site", owner); err != nil {
+			t.Fatal(err)
+		}
+		var ownerName string
+		if err := db.QueryRowContext(ctx, `SELECT owner_name FROM sites WHERE name = 'human-site'`).Scan(&ownerName); err != nil {
+			t.Fatal(err)
+		}
+		if ownerName != "Site Owner" {
+			t.Fatalf("owner_name = %q, want Site Owner", ownerName)
+		}
+	})
+
+	t.Run("new server-owned site", func(t *testing.T) {
+		db := openTestDB(t)
+		registry := NewSiteRegistry(db, nil)
+		owner := Identity{PeerIP: "100.64.0.9", PeerName: "gitlab-runner"}
+
+		if _, err := registry.AuthorizeDeploy(ctx, "new-site", owner); err != nil {
+			t.Fatal(err)
+		}
+		var ownerName string
+		if err := db.QueryRowContext(ctx, `SELECT owner_name FROM sites WHERE name = 'new-site'`).Scan(&ownerName); err != nil {
+			t.Fatal(err)
+		}
+		if ownerName != "gitlab-runner" {
+			t.Fatalf("owner_name = %q, want gitlab-runner", ownerName)
+		}
+	})
+
+	t.Run("existing server-owned site", func(t *testing.T) {
+		db := openTestDB(t)
+		registry := NewSiteRegistry(db, nil)
+		legacyOwner := Identity{PeerIP: "100.64.0.9"}
+		create, err := registry.AuthorizeDeploy(ctx, "existing-site", legacyOwner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.CompleteDeploy(ctx, "existing-site", create); err != nil {
+			t.Fatal(err)
+		}
+
+		owner := Identity{PeerIP: "100.64.0.9", PeerName: "gitlab-runner"}
+		if _, err := registry.AuthorizeDeploy(ctx, "existing-site", owner); err != nil {
+			t.Fatal(err)
+		}
+		var ownerName string
+		if err := db.QueryRowContext(ctx, `SELECT owner_name FROM sites WHERE name = 'existing-site'`).Scan(&ownerName); err != nil {
+			t.Fatal(err)
+		}
+		if ownerName != "gitlab-runner" {
+			t.Fatalf("owner_name = %q, want gitlab-runner", ownerName)
+		}
+	})
+
+	t.Run("maintainer cannot replace missing owner name", func(t *testing.T) {
+		db := openTestDB(t)
+		registry := NewSiteRegistry(db, nil)
+		registry.SetPolicyResolver(func(context.Context, string) (*AccessPolicy, error) {
+			return &AccessPolicy{Maintainers: []string{"maintainer@example.com"}}, nil
+		})
+		owner := Identity{Email: "owner@example.com"}
+		create, err := registry.AuthorizeDeploy(ctx, "maintained-site", owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.CompleteDeploy(ctx, "maintained-site", create); err != nil {
+			t.Fatal(err)
+		}
+		maintainer := Identity{Email: "maintainer@example.com", Name: "Maintainer"}
+		if _, err := registry.AuthorizeDeploy(ctx, "maintained-site", maintainer); err != nil {
+			t.Fatal(err)
+		}
+		var ownerName string
+		if err := db.QueryRowContext(ctx, `SELECT owner_name FROM sites WHERE name = 'maintained-site'`).Scan(&ownerName); err != nil {
+			t.Fatal(err)
+		}
+		if ownerName != "" {
+			t.Fatalf("owner_name = %q, want blank", ownerName)
+		}
+	})
+}
+
 func TestAllSitesExcludesPendingPolicyTransitions(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

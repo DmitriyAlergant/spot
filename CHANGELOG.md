@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Displayed NetBird peer names instead of IP addresses for sites owned by setup-key CI or server peers, including existing sites after their next owner deploy.
+
 ## [0.4.0] - 2026-07-18
 
 ### Added

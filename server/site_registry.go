@@ -159,7 +159,7 @@ func (r *SiteRegistry) AuthorizeDeploy(ctx context.Context, site string, actor I
 			}
 			var generation int64
 			if err := tx.QueryRowContext(ctx, insertSiteSQL,
-				site, strings.ToLower(actor.Email), actor.PeerIP, actor.Name, claimState,
+				site, strings.ToLower(actor.Email), actor.PeerIP, ownerNameForIdentity(actor), claimState,
 			).Scan(&generation); err != nil {
 				tx.Rollback()
 				return DeployAuthorization{}, fmt.Errorf("claim site %s: %w", site, err)
@@ -189,9 +189,13 @@ func (r *SiteRegistry) AuthorizeDeploy(ctx context.Context, site string, actor I
 		} else if snapshot.State == SiteStateProvisioning {
 			targetState = SiteStateProvisioning
 		}
+		ownerName := ""
+		if role == ManagementRoleOwner {
+			ownerName = ownerNameForIdentity(actor)
+		}
 		var generation int64
 		if err := tx.QueryRowContext(ctx, touchSiteSQL,
-			string(targetState), site, snapshot.ContentGeneration,
+			string(targetState), ownerName, site, snapshot.ContentGeneration,
 		).Scan(&generation); err != nil {
 			tx.Rollback()
 			if errors.Is(err, sql.ErrNoRows) {
@@ -855,6 +859,7 @@ const (
 	touchSiteSQL = `UPDATE sites SET
 		updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
 		state = ?,
+		owner_name = CASE WHEN owner_name = '' THEN ? ELSE owner_name END,
 		content_dirty = 1,
 		content_generation = content_generation + 1
 		WHERE name = ? AND content_generation = ? AND policy_transition_generation = 0
@@ -925,6 +930,13 @@ func actorKey(actor Identity) string {
 		return strings.ToLower(actor.Email)
 	}
 	return actor.PeerIP
+}
+
+func ownerNameForIdentity(actor Identity) string {
+	if name := strings.TrimSpace(actor.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(actor.PeerName)
 }
 
 func allowsAdmin(policy *AccessPolicy, actor Identity) bool {
