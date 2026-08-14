@@ -4,6 +4,7 @@
   "updated_at": "example",
   "cards": [
     {
+      "id": "overview",
       "title": "What Spot Show is",
       "summary": "Agents write this JSON instead of hand-authoring a whole page.",
       "blocks": [
@@ -15,27 +16,38 @@
         {
           "kind": "mermaid",
           "title": "Workflow",
-          "body": "flowchart LR\n  A[Agent] --> B[show.json]\n  B --> C[spot show deploy]\n  C --> D[Spot site]\n  D --> E[Browser refresh]"
+          "body": "flowchart TD\n  A[Agent] --> B[show.json]\n  B --> C[spot show deploy]\n  C --> D[Spot site]\n  D --> E[Browser refresh]"
         }
       ]
     },
     {
+      "id": "implementation",
       "title": "Implementation checkpoint",
       "summary": "A typical agent update combines a diff with validation output.",
       "blocks": [
         {
           "kind": "diff",
           "title": "Example patch",
+          "layout": "split",
           "body": "diff --git a/app.js b/app.js\n@@\n-console.log('old')\n+console.log('new')"
         },
         {
           "kind": "terminal",
           "title": "Validation",
-          "body": "$ just test\nok  spot/server  1.8s"
+          "cols": 92,
+          "body": "$ just test\n\u001b[32;1mok\u001b[0m  spot/server  1.8s"
+        },
+        {
+          "kind": "code",
+          "title": "renderer.js",
+          "language": "js",
+          "line_start": 80,
+          "body": "export function render(show) {\n  return show.cards.map(renderCard);\n}"
         }
       ]
     },
     {
+      "id": "status",
       "title": "Structured status",
       "compact": true,
       "blocks": [
@@ -45,19 +57,37 @@
           "value": {
             "live_reload": true,
             "same_site_updates": true,
-            "supported_blocks": ["markdown", "mermaid", "diff", "terminal", "code", "json", "image", "html"]
+            "supported_blocks": ["markdown", "mermaid", "diff", "terminal", "code", "json", "image", "html", "trace"]
           }
         }
       ]
     },
     {
+      "id": "sandbox",
       "title": "Small custom demo",
       "compact": true,
       "blocks": [
         {
           "kind": "html",
           "title": "Sandboxed HTML",
-          "body": "<style>body{margin:0;min-height:180px;display:grid;place-items:center;background:linear-gradient(135deg,#0f172a,#7c3aed);color:white;font:18px system-ui}.box{padding:20px 24px;border:1px solid rgba(255,255,255,.3);border-radius:18px;background:rgba(255,255,255,.12)}</style><div class=box>Custom HTML block</div>"
+          "body": "<style>body{min-height:180px;display:grid;place-items:center;background:var(--spot-panel-muted);color:var(--spot-text)}.box{padding:20px 24px;border:1px solid var(--spot-line);border-radius:12px;background:var(--spot-panel);box-shadow:0 14px 32px color-mix(in srgb,var(--spot-text),transparent 92%)}strong{color:var(--spot-accent)}</style><div class=box><strong>Theme-aware</strong> HTML block</div>"
+        }
+      ]
+    },
+    {
+      "id": "trace",
+      "title": "Agent trace",
+      "summary": "A compact timeline makes implementation progress easy to scan.",
+      "blocks": [
+        {
+          "kind": "trace",
+          "title": "Build sequence",
+          "steps": [
+            { "label": "Inspect the existing renderer", "kind": "tool", "status": "done", "ts": "10:42" },
+            { "label": "Implement the viewer foundation", "kind": "code", "status": "done", "ts": "10:51", "detail": "Added validation, safe assets, theme propagation, card links, and fullscreen visuals." },
+            { "label": "Run browser verification", "kind": "test", "status": "running", "ts": "11:03" },
+            { "label": "Publish the report", "kind": "deploy", "status": "pending" }
+          ]
         }
       ]
     }

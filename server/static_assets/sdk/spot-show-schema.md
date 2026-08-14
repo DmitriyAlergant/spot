@@ -7,6 +7,12 @@ show is a JSON document rendered into a static site by:
 spot show deploy <site-name> show.json
 ```
 
+Validate structure and local image references before building or deploying:
+
+```sh
+spot show validate show.json
+```
+
 Reuse the same site name while iterating. Open browser tabs refresh after each
 redeploy through `/spot-live.js`. The generated `_spot.json` uses the show's
 `title` and `description` for gallery metadata. `spot show deploy` captures and
@@ -38,6 +44,7 @@ Fields:
 
 ```json
 {
+  "id": "implementation-plan",
   "title": "Implementation plan",
   "summary": "Short card intro.",
   "compact": false,
@@ -49,6 +56,7 @@ Fields:
 
 | field | type | required | meaning |
 | --- | --- | --- | --- |
+| `id` | string | no | Stable card ID used by copyable `#card-...` links. Must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. |
 | `title` | string | no | Card heading. Strongly recommended. |
 | `summary` | string | no | Short card intro. |
 | `description` | string | no | Alias/fallback for `summary`. |
@@ -67,7 +75,7 @@ Common fields:
 
 | field | type | required | meaning |
 | --- | --- | --- | --- |
-| `kind` | string | yes | One of `markdown`, `mermaid`, `diff`, `terminal`, `code`, `json`, `image`, `html`. |
+| `kind` | string | yes | One of `markdown`, `mermaid`, `diff`, `terminal`, `code`, `json`, `image`, `html`, `trace`. |
 | `title` | string | no | Label shown in the block header. |
 | `body` | string | kind-dependent | Preferred text/content field. |
 | `text` | string | no | Alias for `body` for text blocks. |
@@ -105,6 +113,10 @@ Use for flows, architecture diagrams, sequence diagrams, and state diagrams.
 }
 ```
 
+Diagrams follow the report's light/dark appearance and can be expanded into an
+accessible fullscreen view. Prefer vertical `flowchart TD`/`TB` diagrams for
+card readability. Mermaid runs in strict security mode.
+
 ### `diff`
 
 Use for code review or showing a patch.
@@ -113,11 +125,14 @@ Use for code review or showing a patch.
 {
   "kind": "diff",
   "title": "Server changes",
+  "layout": "split",
   "body": "diff --git a/server.go b/server.go\n@@\n- old\n+ new"
 }
 ```
 
-Pass unified/git diff text in `body`.
+Pass unified/git diff text in `body`. `layout` may be `unified` (the default) or
+`split`. An unparseable split diff remains available as readable source rather
+than dropping content.
 
 ### `terminal`
 
@@ -127,9 +142,15 @@ Use for commands, test output, logs, and deploy transcripts.
 {
   "kind": "terminal",
   "title": "Validation",
-  "body": "$ go test ./...\nok  ./server"
+  "cols": 100,
+  "body": "$ go test ./...\n\u001b[32;1mok\u001b[0m  ./server"
 }
 ```
+
+ANSI SGR colors and emphasis are supported. `cols` is optional and must be an
+integer from 20 through 240; it expresses the intended terminal width without
+forcing the card wider than the viewport. Cursor-addressing terminal controls
+are intentionally ignored.
 
 ### `code`
 
@@ -140,6 +161,7 @@ Use for focused snippets where the code itself is the point.
   "kind": "code",
   "title": "renderer.js",
   "language": "js",
+  "line_start": 80,
   "body": "export function render(show) { return show.cards; }"
 }
 ```
@@ -150,6 +172,11 @@ Fields:
 | --- | --- | --- | --- |
 | `body` | string | yes | Source code. |
 | `language` | string | no | Language hint such as `js`, `ts`, `go`, `python`. |
+| `line_start` | positive integer | no | First displayed line number; defaults to `1`. |
+
+Code displays copy-safe line numbers. Known languages are highlighted through a
+pinned progressive browser dependency; plain escaped text remains readable if
+the dependency is unavailable.
 
 ### `json`
 
@@ -192,7 +219,11 @@ Fields:
 | `caption` | string | no | Caption under the image. |
 
 If you reference a local image file, include it in the generated/deployed folder
-or use a URL reachable by the browser.
+or use a URL reachable by the browser. `spot show build` and `spot show deploy`
+automatically copy local `image.src` files that stay within the directory
+containing `show.json`, preserving their relative paths. Missing files, path
+traversal, and symlink escapes fail validation. Images can be expanded
+fullscreen in the generated report.
 
 ### `html`
 
@@ -208,6 +239,60 @@ Use sparingly for small custom or interactive demos.
 
 HTML blocks render inside a sandboxed iframe. Do not put secrets in HTML; Spot
 source may be downloadable by authorized viewers.
+
+The iframe remains opaque-origin and resizes through a guarded message bridge.
+Use these theme variables so a fragment follows the report without hard-coded
+light/dark colors:
+
+```css
+--spot-bg
+--spot-panel
+--spot-panel-muted
+--spot-line
+--spot-text
+--spot-muted
+--spot-accent
+--spot-accent-secondary
+--spot-good
+--spot-warn
+--spot-bad
+--spot-font-sans
+--spot-font-mono
+```
+
+### `trace`
+
+Use for a compact, expandable timeline of agent, tool, build, test, or deploy
+steps.
+
+```json
+{
+  "kind": "trace",
+  "title": "Agent run",
+  "steps": [
+    {
+      "label": "Run the test suite",
+      "kind": "test",
+      "status": "done",
+      "detail": "just test passed",
+      "ts": "10:42"
+    }
+  ]
+}
+```
+
+`steps` must be a non-empty array. Every step requires a non-empty `label`.
+`kind`, `detail`, and `ts` are optional strings. `status` is optional and must be
+one of `pending`, `running`, `done`, or `error`. Detail starts collapsed.
+
+## Viewer controls
+
+- Appearance offers system, light, and dark modes and remembers the choice.
+- Every card receives a stable fragment link; set `card.id` when links must stay
+  stable across title or ordering changes.
+- Mermaid and image blocks include accessible fullscreen controls.
+- Code and diff blocks include copy controls that copy source rather than line
+  numbers or rendered decoration.
 
 ## Recommended card patterns
 
@@ -268,7 +353,13 @@ source may be downloadable by authorized viewers.
    spot show init show.json
    ```
 
-3. Deploy the same site name:
+3. Validate the document and referenced local images:
+
+   ```sh
+   spot show validate show.json
+   ```
+
+4. Deploy the same site name:
 
    ```sh
    spot show deploy <site-name> show.json
@@ -276,14 +367,14 @@ source may be downloadable by authorized viewers.
 
    The deploy should include `_screenshot.png` for the gallery thumbnail.
 
-4. Tell the user the URL once. On later updates, just redeploy and summarize what
+5. Tell the user the URL once. On later updates, just redeploy and summarize what
    changed. For active local iteration, use:
 
    ```sh
    spot show watch <site-name> show.json
    ```
 
-5. Prefer updating the existing show over creating a new site.
+6. Prefer updating the existing show over creating a new site.
 
 ## Safety notes
 

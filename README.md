@@ -87,6 +87,12 @@ Start from a template:
 cli/spot show init show.json
 ```
 
+Validate the document and any local image assets:
+
+```sh
+cli/spot show validate show.json
+```
+
 Deploy it to a stable site name:
 
 ```sh
@@ -119,6 +125,13 @@ http://spot-show.spot.localhost:8080/
 The generated page includes `/spot-live.js`, so open tabs refresh after each
 redeploy. The generated `_spot.json` uses the show's `title` and `description`
 for gallery metadata.
+
+The report viewer supports system/light/dark appearance, stable card links,
+fullscreen Mermaid diagrams and images, sandboxed theme-aware HTML, copied
+local image assets, syntax-highlighted code with source line numbers, ANSI
+terminal output, unified or split diffs, collapsible JSON, and agent trace
+timelines. Existing Show documents remain valid; the richer fields are
+optional.
 
 The full schema is served by the running Spot instance:
 

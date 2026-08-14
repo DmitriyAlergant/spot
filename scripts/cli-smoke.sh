@@ -71,8 +71,101 @@ try:
         built = run(["./cli/spot", "show", "build", str(show), str(out)]).stdout
         assert (out / "index.html").exists(), built
         assert (out / "show.json").exists(), built
+        assert "valid:" in run(["./cli/spot", "show", "validate", str(show)]).stdout
+        runtime = (out / "index.html").read_text()
+        for marker in ["__spotShow", "MutationObserver", "visual-dialog", "trace-list", "diff-split-pane", "cardIDs", "@highlightjs/cdn-assets@11.12.0", "mermaid@11.16.1"]:
+            assert marker in runtime, marker
+        assert "allow-same-origin" not in runtime
         meta = (out / "_spot.json").read_text()
         assert '"title":"My Spot Show"' in meta, meta
+        assets = pathlib.Path(tmp) / "assets"
+        assets.mkdir()
+        image = assets / "result.png"
+        image.write_bytes(b"png")
+        asset_show = pathlib.Path(tmp) / "asset-show.json"
+        asset_show.write_text(json.dumps({
+            "title": "Assets and additions",
+            "cards": [{
+                "id": "evidence",
+                "blocks": [
+                    {"kind": "image", "src": "assets/result.png", "alt": "Result"},
+                    {"kind": "code", "body": "package main", "language": "go", "line_start": 80},
+                    {"kind": "diff", "body": "-old\n+new", "layout": "split"},
+                    {"kind": "terminal", "body": "\\u001b[32mok\\u001b[0m", "cols": 100},
+                    {"kind": "trace", "steps": [{"label": "Build", "status": "done"}]},
+                ],
+            }],
+        }))
+        asset_out = pathlib.Path(tmp) / "asset-out"
+        run(["./cli/spot", "show", "build", str(asset_show), str(asset_out)])
+        assert (asset_out / "assets" / "result.png").read_bytes() == b"png"
+        duplicate = pathlib.Path(tmp) / "duplicate.json"
+        duplicate.write_text('{"cards":[{"id":"same","blocks":[]},{"id":"same","blocks":[]}]}')
+        duplicate_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(duplicate)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert duplicate_result.returncode != 0
+        assert "duplicate card id" in duplicate_result.stderr
+        invalid_kind = pathlib.Path(tmp) / "invalid-kind.json"
+        invalid_kind.write_text('{"cards":[{"blocks":[{"kind":"video"}]}]}')
+        kind_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(invalid_kind)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert kind_result.returncode != 0
+        assert "unsupported block kind" in kind_result.stderr
+        invalid_layout = pathlib.Path(tmp) / "invalid-layout.json"
+        invalid_layout.write_text('{"cards":[{"blocks":[{"kind":"diff","layout":[]}]}]}')
+        layout_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(invalid_layout)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert layout_result.returncode != 0
+        assert "cards[0].blocks[0].layout" in layout_result.stderr
+        assert "Traceback" not in layout_result.stderr
+        invalid_status = pathlib.Path(tmp) / "invalid-status.json"
+        invalid_status.write_text('{"cards":[{"blocks":[{"kind":"trace","steps":[{"label":"Run","status":{}}]}]}]}')
+        status_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(invalid_status)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert status_result.returncode != 0
+        assert "cards[0].blocks[0].steps[0].status" in status_result.stderr
+        assert "Traceback" not in status_result.stderr
+        future = pathlib.Path(tmp) / "future.json"
+        future.write_text('{"cards":[],"future_option":true}')
+        future_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(future)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert future_result.returncode == 0
+        assert "warning:" in future_result.stderr
+        preserved = pathlib.Path(tmp) / "preserved"
+        preserved.mkdir()
+        (preserved / "sentinel").write_text("keep")
+        missing = pathlib.Path(tmp) / "missing.json"
+        missing.write_text('{"cards":[{"blocks":[{"kind":"image","src":"missing.png"}]}]}')
+        missing_result = subprocess.run(
+            ["./cli/spot", "show", "build", str(missing), str(preserved)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert missing_result.returncode != 0
+        assert "local file not found" in missing_result.stderr
+        assert (preserved / "sentinel").read_text() == "keep"
+        outside = pathlib.Path(tmp).parent / (pathlib.Path(tmp).name + "-outside.png")
+        outside.write_bytes(b"outside")
+        traversal = pathlib.Path(tmp) / "traversal.json"
+        traversal.write_text(json.dumps({"cards": [{"blocks": [{"kind": "image", "src": "../" + outside.name}]}]}))
+        traversal_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(traversal)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert traversal_result.returncode != 0
+        assert "escapes the Show directory" in traversal_result.stderr
+        linked = pathlib.Path(tmp) / "linked.png"
+        linked.symlink_to(outside)
+        symlink_show = pathlib.Path(tmp) / "symlink.json"
+        symlink_show.write_text('{"cards":[{"blocks":[{"kind":"image","src":"linked.png"}]}]}')
+        symlink_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(symlink_show)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert symlink_result.returncode != 0
+        assert "escapes the Show directory" in symlink_result.stderr
+        outside.unlink()
         compact = pathlib.Path(tmp) / "compact.json"
         compact.write_text('{"title":"Auth \\"happy path\\"","description":"Compact JSON","cards":[]}')
         compact_out = pathlib.Path(tmp) / "compact-out"

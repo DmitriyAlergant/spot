@@ -112,6 +112,7 @@ Fetch `/spot-show-schema.md` for the authoritative schema. The block vocabulary:
 - `json` — structured data/config/API responses.
 - `image` — screenshots or generated images.
 - `html` — small sandboxed interactive/custom demos.
+- `trace` — expandable agent/tool/build/test/deploy timelines.
 
 Rules of thumb:
 
@@ -119,7 +120,14 @@ Rules of thumb:
 - Use `diff` + `terminal` for implementation checkpoints.
 - Use `json` when data shape matters.
 - Use `image` for visual evidence.
+- Use `trace` when the sequence and status of agent work matter.
 - Use `html` sparingly when the other blocks cannot express the idea.
+
+The viewer offers system/light/dark appearance, copyable card links, and
+fullscreen Mermaid/image views. Give cards an explicit `id` when a copied link
+must survive title or ordering changes. HTML fragments should use the
+`--spot-*` theme variables documented by `spot show-schema`; the sandbox resizes
+through a guarded bridge without receiving same-origin access.
 
 ## Recommended workflow
 
@@ -136,7 +144,13 @@ Rules of thumb:
    spot show init show.json
    ```
 
-4. Deploy the same site name:
+4. Validate the document and local image references:
+
+   ```sh
+   spot show validate show.json
+   ```
+
+5. Deploy the same site name:
 
    ```sh
    spot show deploy <site-name> show.json
@@ -146,13 +160,13 @@ Rules of thumb:
    deploy output and do not skip the screenshot unless the user explicitly asks
    or the environment cannot run Chromium.
 
-5. Tell the user the URL once:
+6. Tell the user the URL once:
 
    ```text
    Open http://<site-name>.<spot-domain>/ — I’ll keep updating this page.
    ```
 
-6. After meaningful progress or user feedback, update `show.json` and redeploy.
+7. After meaningful progress or user feedback, update `show.json` and redeploy.
 
 ## Example `show.json`
 
