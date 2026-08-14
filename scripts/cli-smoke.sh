@@ -73,7 +73,7 @@ try:
         assert (out / "show.json").exists(), built
         assert "valid:" in run(["./cli/spot", "show", "validate", str(show)]).stdout
         runtime = (out / "index.html").read_text()
-        for marker in ["__spotShow", "visual-dialog", "trace-list", "cardIDs", "@highlightjs/cdn-assets@11.12.0", "mermaid@11.16.1"]:
+        for marker in ["__spotShow", "MutationObserver", "visual-dialog", "trace-list", "diff-split-pane", "cardIDs", "@highlightjs/cdn-assets@11.12.0", "mermaid@11.16.1"]:
             assert marker in runtime, marker
         assert "allow-same-origin" not in runtime
         meta = (out / "_spot.json").read_text()
@@ -113,6 +113,22 @@ try:
         )
         assert kind_result.returncode != 0
         assert "unsupported block kind" in kind_result.stderr
+        invalid_layout = pathlib.Path(tmp) / "invalid-layout.json"
+        invalid_layout.write_text('{"cards":[{"blocks":[{"kind":"diff","layout":[]}]}]}')
+        layout_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(invalid_layout)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert layout_result.returncode != 0
+        assert "cards[0].blocks[0].layout" in layout_result.stderr
+        assert "Traceback" not in layout_result.stderr
+        invalid_status = pathlib.Path(tmp) / "invalid-status.json"
+        invalid_status.write_text('{"cards":[{"blocks":[{"kind":"trace","steps":[{"label":"Run","status":{}}]}]}]}')
+        status_result = subprocess.run(
+            ["./cli/spot", "show", "validate", str(invalid_status)], cwd=root, env=env, text=True, capture_output=True
+        )
+        assert status_result.returncode != 0
+        assert "cards[0].blocks[0].steps[0].status" in status_result.stderr
+        assert "Traceback" not in status_result.stderr
         future = pathlib.Path(tmp) / "future.json"
         future.write_text('{"cards":[],"future_option":true}')
         future_result = subprocess.run(
