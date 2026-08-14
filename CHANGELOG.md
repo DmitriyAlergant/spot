@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Upgraded Spot Show with structural validation, safe local image bundling, stable card links, system/light/dark appearance, fullscreen Mermaid and image views, theme-aware sandboxed HTML, code line numbers and highlighting, ANSI terminal output, split diffs, and agent trace timelines.
+
 ### Fixed
 
+- Replaced Spot Show's direct sandbox document inspection with a guarded resize and theme bridge so opaque-origin HTML blocks size correctly without `allow-same-origin`.
 - Displayed NetBird peer names instead of IP addresses for sites owned by setup-key CI or server peers, including existing sites after their next owner deploy.
 
 ## [0.4.0] - 2026-07-18
